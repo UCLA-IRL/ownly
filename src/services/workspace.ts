@@ -47,8 +47,12 @@ export class Workspace {
     // Set up workspace API and client
     let api: WorkspaceAPI | null = null;
     try {
+
       api = await ndn.api.get_workspace(metadata.name, metadata.ignore);
       await api.start();
+
+      // Wait until user key is ready before proceeding.
+      await ndn.api.wait_user_key(metadata.name);
 
       // Check if we have the encryption keys
       if (!metadata.psk) throw new Error('Missing PSK');

@@ -39,7 +39,7 @@ var repoName, _ = enc.NameFromStr("/ndnd/ucla/repo")
 // TODO: this is testbed configuration
 var multicastPrefix, _ = enc.NameFromStr("/ndn/multicast")
 
-//go:embed schema.tlv
+//go:embed schema.tlv2
 var SchemaBytes []byte
 
 // JoinWorkspace joins the workspace with the given name.
@@ -131,15 +131,12 @@ func (a *App) JoinWorkspace(wkspStr_ string, create bool) (wkspStr string, err e
 
 		// TODO: validate the invitation itself
 		invitation = args.RawData
+		invitationData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(invitation))
+		a.store.Put(invitationData.Name(), invitation.Join())
 
 		log.Info(a, "Got workspace invitation", "name", wkspStr, "invite", args.Data.Name())
 	} else {
 		log.Info(a, "Joining workspace in own namespace", "name", wkspStr)
-	}
-
-	err = a.SignWorkspaceCert(wkspName, idName, idSigner, invitation)
-	if err != nil {
-		log.Error(a, "Failed to sign workspace certificate")
 	}
 	return
 }
@@ -207,11 +204,6 @@ func (a *App) onAccessRequest(args ndn.InterestHandlerArgs) {
 
 // GetWorkspace returns a JS object representing the workspace with the given name.
 func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, err error) {
-	group, err := enc.NameFromStr(groupStr)
-	if err != nil {
-		return
-	}
-
 	// Create trust configuration
 	trust, err := getTrustConfig(a.keychain)
 	if err != nil {
@@ -219,40 +211,38 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	}
 
 	// Get identity key to use (same as testbed key)
-	idKey, _ := a.GetTestbedKey()
-	if idKey == nil {
+	idSigner, _ := a.GetTestbedKey()
+	if idSigner == nil {
 		err = fmt.Errorf("no valid testbed key found")
 		return
 	}
 	// Use testbed key to sign NFD management commands
-	a.SetCmdKey(idKey)
-	idName := idKey.KeyName().Prefix(-2) // pop KeyId and KEY
+	a.SetCmdKey(idSigner)
+	idName := idSigner.KeyName().Prefix(-2) // pop KeyId and KEY
 
 	// Get workspace-specific user key
-	detect := group.Append(enc.NewKeywordComponent("KD"))
-	userKey := trust.Suggest(detect)
-	if userKey == nil {
-		err = fmt.Errorf("no valid user key found")
+	client := object.NewClient(a.engine, a.store, a.trust)
+
+	// The store must have invitation, otherwise we are in trouble
+	wkspName, _ := enc.NameFromStr(groupStr)
+	inviteName := wkspName.
+		Append(enc.NewGenericComponent("root")).
+		Append(enc.NewKeywordComponent("INVITE")).
+		Append(idName...)
+	invitation, err := client.Store().Get(inviteName, true)
+	if err != nil && invitation == nil {
+		err = fmt.Errorf("No invitation found")
 		return
-	} else {
-		log.Info(a, "Found valid user key", "name", userKey.KeyName())
 	}
-
-	// If [idKey ==> userKey] does not exist, resign
-	certWire, _ := a.keychain.Store().Get(userKey.KeyName(), true)
-	if certWire != nil {
-		certData, _, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{certWire}))
-		if err == nil && !idKey.KeyName().IsPrefix(certData.Signature().KeyName()) {
-			if err := a.SignWorkspaceCert(group, idName, idKey, nil); err != nil {
-				log.Error(a, "Failed to resign workspace cert", "err", err)
-			}
+	detect := wkspName.Append(enc.NewKeywordComponent("KD"))
+	userSigner := trust.Suggest(detect)
+	if userSigner == nil {
+		err = fmt.Errorf("no valid user key found")
+		if _, err = a.Bootstrap(client, wkspName, idName, idSigner, enc.Wire{invitation}); err != nil {
+			log.Error(a, "Failed to start the bootstrapping process", "err", err)
+			return
 		}
-	} else {
-		log.Error(a, "No workspace cert to resign")
 	}
-
-	// Create client object for this workspace
-	client := object.NewClient(a.engine, a.store, trust)
 
 	// Reset encryption keys
 	a.psk = nil
@@ -260,11 +250,10 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	a.aes = nil
 
 	// If owner, watch for access request interests
-	isOwner, err := a.IsWorkspaceOwner(groupStr)
-	if err != nil {
-		return
-	}
+	isOwner, _ := a.IsWorkspaceOwner(groupStr)
+	nodeName := idName
 	if isOwner {
+		nodeName, _ = enc.NameFromStr("32=owner")
 		// prefix, _ := enc.NameFromStr("/ndn/multicast" + groupStr) // Uncomment if you want to use multicast
 		prefix, _ := enc.NameFromStr(groupStr)
 		accessRequestPrefix := prefix.
@@ -277,15 +266,24 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			OnError: nil, // TODO
 		})
 		log.Info(nil, "Watching for access requests")
+		// Need to join boot process anyway
+		detect := wkspName.Append(enc.NewKeywordComponent("RD"))
+		rootSigner := trust.Suggest(detect)
+		if rootSigner == nil {
+			log.Error(a, "Missing wksp root key")
+			return
+		}
+		a.StartBootSyncOwner(client, wkspName, rootSigner)
 	}
 
+	// After bootstrapping
 	var workspaceJs map[string]any
 	workspaceJs = map[string]any{
 		// name: string;
-		"name": js.ValueOf(idName.String()), // wrong
+		"name": js.ValueOf(nodeName.String()), // wrong
 
 		// group: string;
-		"group": js.ValueOf(group.String()),
+		"group": js.ValueOf(wkspName.String()),
 
 		// set_encrypt_keys(psk: Uint8Array, dsk: Uint8Array): Promise<void>;
 		"set_encrypt_keys": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
@@ -303,7 +301,8 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if err != nil {
 				return nil, err
 			}
-			a.ivb = userKey.KeyName().Hash()
+			a.ivb = idSigner.KeyName().Hash()
+			// a.ivb = userSigner.KeyName().Hash()
 
 			return nil, nil
 		}),
@@ -315,6 +314,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}
 
 			return nil, nil
+		}),
+
+		// wait_user_key(): Promise<void>;
+		"wait_user_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			return nil, a.WaitUserKey(wkspName.String())
 		}),
 
 		// stop(): Promise<void>;
@@ -383,7 +387,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 			// Create new SVS ALO instance
 			svsAlo, err := ndn_sync.NewSvsALO(ndn_sync.SvsAloOpts{
-				Name:         idName,
+				Name:         nodeName,
 				InitialState: stateWire,
 
 				Svs: ndn_sync.SvSyncOpts{
@@ -420,7 +424,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			// There is always a "root" project that manages the workspace,
 			// so we reuse that naming convention for the invitation.
 			// /<wksp>/root/32=INVITE/<invitee>/v=<time>
-			inviteName := group.
+			inviteName := wkspName.
 				Append(enc.NewGenericComponent("root")).
 				Append(enc.NewKeywordComponent("INVITE")).
 				Append(invitee...).
@@ -438,7 +442,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				Content: trust_schema.CrossSchemaContent{
 					SimpleSchemaRules: []*trust_schema.SimpleSchemaRule{{
 						// Authorize invitee's identity key to sign data
-						NamePrefix: group.Append(invitee...),
+						NamePrefix: wkspName.Append(invitee...),
 						KeyLocator: &spec.KeyLocator{
 							Name: invitee.Append(enc.NewGenericComponent("KEY")),
 						},
@@ -457,7 +461,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// wait_for_dsk(key: Uint8Array): Promise<Uint8Array>;
 		"wait_for_dsk": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			dsk, err := a.fetchDsk(client, group, jsutil.JsArrayToSlice(p[0]))
+			dsk, err := a.fetchDsk(client, wkspName, jsutil.JsArrayToSlice(p[0]))
 			if err != nil {
 				return nil, err
 			}
@@ -468,48 +472,149 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	return js.ValueOf(workspaceJs), nil
 }
 
-func (a *App) SignWorkspaceCert(
-	wkspName enc.Name,
-	idName enc.Name,
-	idSigner ndn.Signer,
-	invitation enc.Wire,
-) error {
-	// Generate key and certificate for this workspace
-	appIdName := wkspName.Append(idName...)
-	appIdKeyName := security.MakeKeyName(appIdName)
-	appIdSigner, err := sig.KeygenEcc(appIdKeyName, elliptic.P256())
+func (a *App) Bootstrap(client ndn.Client, wkspName enc.Name, idName enc.Name, idSigner ndn.Signer, invitation enc.Wire) (ndn.Signer, error) {
+
+	// If owner, watch for access request interests
+	isOwner, err := a.IsWorkspaceOwner(wkspName.String())
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if isOwner {
+		rootSigner, ownerSigner, err := a.SetupOwner(wkspName, idSigner)
+		if err != nil {
+			log.Error(a, "Failed to setup workspace", "err", err)
+			return nil, err
+		}
+		a.StartBootSyncOwner(client, wkspName, rootSigner)
+		return ownerSigner, nil
+	} else {
+		preCertWire, userSigner, err := a.SignPreCert(wkspName, idName, idSigner, invitation)
+		if err != nil {
+			log.Error(a, "Failed to sign precert", "err", err)
+			return nil, err
+		}
+
+		a.StartBootSyncParticipant(client, wkspName, idName, preCertWire)
+		return userSigner, nil
+	}
+}
+
+func (a *App) SignPreCert(wkspName enc.Name, idName enc.Name, idSigner ndn.Signer, invitation enc.Wire) (enc.Wire, ndn.Signer, error) {
+	// Generate key and certificate for this workspace
+	userName := wkspName.Append(idName...)
+	userKeyName := security.MakeKeyName(userName)
+	userSigner, err := sig.KeygenEcc(userKeyName, elliptic.P256())
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Get key secret to sign certificate
-	appIdSecret, err := sig.MarshalSecretToData(appIdSigner)
+	userSecret, err := sig.MarshalSecretToData(userSigner)
 	if err != nil {
-		return err
+		return nil, userSigner, err
 	}
 
 	// Create certificate for this workspace
 	// TODO: limit validity to same as invite validity
-	appIdCert, err := security.SignCert(security.SignCertArgs{
-		Data:        appIdSecret,
+	preCertWire, err := security.SignCert(security.SignCertArgs{
+		Data:        userSecret,
+		SignerName:  idSigner.KeyName().Append(enc.NewGenericComponent("NDNCERT")), // this is hack
 		Signer:      idSigner,
-		IssuerId:    enc.NewGenericComponent("self"),
+		IssuerId:    enc.NewGenericComponent("pre"),
 		NotBefore:   time.Now().Add(-time.Hour),
-		NotAfter:    time.Now().AddDate(10, 0, 0), // for now
+		NotAfter:    time.Now().AddDate(0, 0, 14), // for two weeks
 		CrossSchema: invitation,
 	})
 	if err != nil {
-		return err
+		return nil, userSigner, err
 	}
 
 	// Insert key and certificate into keychain
-	if err = a.keychain.InsertKey(appIdSigner); err != nil {
-		return err
+	if err = a.keychain.InsertKey(userSigner); err != nil {
+		return preCertWire, userSigner, err
 	}
-	if err = a.keychain.InsertCert(appIdCert.Join()); err != nil {
-		return err
+	if err = a.keychain.InsertCert(preCertWire.Join()); err != nil {
+		return preCertWire, userSigner, err
 	}
-	return nil
+	return preCertWire, userSigner, nil
+}
+
+func (a *App) SetupOwner(wkspName enc.Name, idSigner ndn.Signer) (ndn.Signer, ndn.Signer, error) {
+	// Generate a trust anchor key
+	rootKeyName := security.MakeKeyName(wkspName)
+	rootSigner, err := sig.KeygenEcc(rootKeyName, elliptic.P256())
+	if err = a.keychain.InsertKey(rootSigner); err != nil {
+		return rootSigner, nil, err
+	}
+	rootSecret, err := sig.MarshalSecretToData(rootSigner)
+	if err != nil {
+		return rootSigner, nil, err
+	}
+
+	// Generate a pre trust anchor
+	preAnchorWire, err := security.SignCert(security.SignCertArgs{
+		Data:      rootSecret,
+		Signer:    idSigner,
+		IssuerId:  enc.NewGenericComponent("pre"),
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().AddDate(0, 0, 90),
+	})
+	if err = a.keychain.InsertCert(preAnchorWire.Join()); err != nil {
+		return rootSigner, nil, err
+	}
+	preAnchor, _, _ := spec.Spec{}.ReadData(enc.NewWireView(preAnchorWire))
+
+	// Generate a trust anchor
+	anchorWire, err := security.SelfSign(security.SignCertArgs{
+		Signer:     rootSigner,
+		SignerName: rootSigner.KeyName().Append(enc.NewGenericComponent("self")),
+		NotBefore:  time.Now().Add(-time.Hour),
+		NotAfter:   time.Now().AddDate(10, 0, 0), // for now
+	})
+	if err = a.keychain.InsertCert(anchorWire.Join()); err != nil {
+		return rootSigner, nil, err
+	}
+
+	// Generate a cert list: we cannot client produce API since it always assumes an object
+	listContent, _ := security.EncodeCertList([]enc.Name{preAnchor.Name()})
+	listPrefix, _ := security.CertListPrefix(rootSigner.KeyName())
+	listName := listPrefix.Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
+	listWireEnc, _ := spec.Spec{}.MakeData(listName, &ndn.DataConfig{
+		Freshness: optional.Some(time.Hour),
+	}, listContent, rootSigner)
+	// Network should fetch from local store
+	a.store.Put(listName, listWireEnc.Wire.Join())
+
+	// Generate owner
+	ownerName := wkspName.Append(enc.NewKeywordComponent("owner"))
+	ownerKeyName := security.MakeKeyName(ownerName)
+	ownerSigner, err := sig.KeygenEcc(ownerKeyName, elliptic.P256())
+	if err != nil {
+		return rootSigner, ownerSigner, err
+	}
+	ownerSecret, err := sig.MarshalSecretToData(ownerSigner)
+	if err != nil {
+		return rootSigner, ownerSigner, err
+	}
+	ownerCertWire, err := security.SignCert(security.SignCertArgs{
+		Data:       ownerSecret,
+		Signer:     rootSigner,
+		SignerName: rootSigner.KeyName().Append(enc.NewGenericComponent("self")),
+		IssuerId:   enc.NewGenericComponent("anchor"),
+		NotBefore:  time.Now().Add(-time.Hour),
+		NotAfter:   time.Now().AddDate(10, 0, 0), // for now
+	})
+	if err != nil {
+		return rootSigner, ownerSigner, err
+	}
+	// Insert key and certificate into keychain
+	if err = a.keychain.InsertKey(ownerSigner); err != nil {
+		return rootSigner, ownerSigner, err
+	}
+	if err = a.keychain.InsertCert(ownerCertWire.Join()); err != nil {
+		return rootSigner, ownerSigner, err
+	}
+	return rootSigner, ownerSigner, nil
 }
 
 func (a *App) SvsAloJs(
@@ -543,7 +648,7 @@ func (a *App) SvsAloJs(
 
 			// Notify repo to start
 			a.ExecWithConnectivity(func() {
-				a.NotifyRepo(client, alo.GroupPrefix(), alo.DataPrefix())
+				a.NotifyRepoJoin(client, alo.GroupPrefix(), alo.DataPrefix())
 			})
 
 			if err := alo.Start(); err != nil {
@@ -853,32 +958,4 @@ func (a *App) AwarenessJs(awareness *Awareness) (api js.Value) {
 		}),
 	}
 	return js.ValueOf(awarenessJs)
-}
-
-func (a *App) NotifyRepo(client ndn.Client, group enc.Name, dataPrefix enc.Name) {
-	// Wait for 1s so that routes get registered
-	time.Sleep(time.Second)
-
-	// Notify repo to join SVS group
-	repoCmd := spec_repo.RepoCmd{
-		SyncJoin: &spec_repo.SyncJoin{
-			Protocol: &spec.NameContainer{Name: spec_repo.SyncProtocolSvsV3},
-			Group:    &spec.NameContainer{Name: group},
-			HistorySnapshot: &spec_repo.HistorySnapshotConfig{
-				Threshold: SnapshotThreshold,
-			},
-			MulticastPrefix: &spec.NameContainer{Name: multicastPrefix},
-		},
-	}
-	client.ExpressCommand(
-		repoName,
-		dataPrefix.Append(enc.NewKeywordComponent("repo-cmd")),
-		repoCmd.Encode(),
-		func(w enc.Wire, err error) {
-			if err != nil {
-				log.Warn(nil, "Repo sync join command failed", "group", group, "err", err)
-			} else {
-				log.Info(nil, "Repo joined SVS group", "group", group)
-			}
-		})
 }

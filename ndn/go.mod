@@ -3,7 +3,8 @@ module github.com/pulsejet/ownly/ndn
 go 1.24.0
 
 require (
-	github.com/named-data/ndnd v1.5.4-0.20251231024424-90181e9d01ac
+	// Upstream reference kept for record; build replaces this with ../ndnd.
+	github.com/named-data/ndnd v1.5.4-0.20260103175005-b51b5dbe29da
 	golang.org/x/crypto v0.45.0
 )
 

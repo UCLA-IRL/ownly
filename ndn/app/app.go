@@ -36,6 +36,16 @@ type App struct {
 
 	// Pending DSK requests -> cancel function
 	dskReqs map[string]*time.Timer
+
+	// Tracks boot sync groups we have already joined to avoid duplicates
+	bootSyncs map[string]bool
+
+	// Known owner trust anchor certificate names
+	ownerAnchors map[string]bool
+
+	// JS callbacks to load/persist owner cert SVS state
+	ownerStateLoad    js.Value
+	ownerStatePersist js.Value
 }
 
 var _ndnd_store_js = js.Global().Get("_ndnd_store_js")
@@ -55,9 +65,11 @@ func NewApp() *App {
 	}
 
 	a := &App{
-		store:    store,
-		keychain: kc,
-		dskReqs:  make(map[string]*time.Timer),
+		store:        store,
+		keychain:     kc,
+		dskReqs:      make(map[string]*time.Timer),
+		bootSyncs:    make(map[string]bool),
+		ownerAnchors: make(map[string]bool),
 	}
 	a.initialize()
 	return a
@@ -77,9 +89,11 @@ func NewNodeApp() *App {
 	}
 
 	a := &App{
-		store:    store,
-		keychain: kc,
-		dskReqs:  make(map[string]*time.Timer),
+		store:        store,
+		keychain:     kc,
+		dskReqs:      make(map[string]*time.Timer),
+		bootSyncs:    make(map[string]bool),
+		ownerAnchors: make(map[string]bool),
 	}
 
 	a.initialize()
@@ -171,6 +185,19 @@ func (a *App) JsApi() js.Value {
 		"get_workspace": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			return a.GetWorkspace(p[0].String(), p[1].Bool())
 		}),
+
+		// wait_user_key(wksp: string): Promise<void>;
+		"wait_user_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			return nil, a.WaitUserKey(p[0].String())
+		}),
+
+		// set_owner_state_callbacks(load: () => Promise<Uint8Array|undefined>, persist: (state: Uint8Array) => Promise<void>): Promise<void>;
+		"set_owner_state_callbacks": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			// p[0]: load callback, p[1]: persist callback
+			a.ownerStateLoad = p[0]
+			a.ownerStatePersist = p[1]
+			return nil, nil
+		}),
 	}
 
 	return js.ValueOf(api)
@@ -190,4 +217,26 @@ func getTrustConfig(keychain ndn.KeyChain) (trust *security.TrustConfig, err err
 	trust.UseDataNameFwHint = true
 
 	return
+}
+
+// WaitUserKey blocks until trust schema suggests a valid user key for the workspace.
+func (a *App) WaitUserKey(groupStr string) error {
+	trust, err := getTrustConfig(a.keychain)
+	if err != nil {
+		return err
+	}
+	group, err := enc.NameFromStr(groupStr)
+	if err != nil {
+		return err
+	}
+	detect := group.Append(enc.NewKeywordComponent("KD"))
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if trust.Suggest(detect) != nil {
+			return nil
+		}
+		<-ticker.C
+	}
 }
