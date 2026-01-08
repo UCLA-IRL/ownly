@@ -14,6 +14,7 @@ import crypto from 'crypto';
 
 import { NodeStatsDb } from '../services/database/stats_node';
 import { NodeProjDb } from '../services/database/proj_db_node';
+import { NodeBootStateDb } from '../services/database/boot_db_node';
 import { getOriginPrivateDirectory } from 'file-system-access';
 import nodeAdapter from 'file-system-access/lib/adapters/node.js';
 
@@ -25,6 +26,7 @@ async function loadServices() {
   globalThis._o = {
     stats: new NodeStatsDb(),
     ProjDb: NodeProjDb,
+    bootState: new NodeBootStateDb(),
 
     getStorageRoot: () => getOriginPrivateDirectory(nodeAdapter, './'),
     streamSaver: null as any, // no node

@@ -1,5 +1,6 @@
 import type { StatsDb } from '@/services/database/stats';
 import type { ProjDbConstructor } from '@/services/database/proj_db';
+import type { BootStateDb } from '@/services/database/boot_db';
 
 declare global {
   // compile-time constants
@@ -10,6 +11,7 @@ declare global {
   interface OwnlyServices {
     stats: StatsDb;
     ProjDb: ProjDbConstructor;
+    bootState: BootStateDb;
 
     getStorageRoot(): Promise<FileSystemDirectoryHandle>;
     streamSaver: typeof import('streamsaver'); // browser only

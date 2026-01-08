@@ -44,8 +44,8 @@ type App struct {
 	ownerAnchors map[string]bool
 
 	// JS callbacks to load/persist owner cert SVS state
-	ownerStateLoad    js.Value
-	ownerStatePersist js.Value
+	bootStateLoad    js.Value
+	bootStatePersist js.Value
 }
 
 var _ndnd_store_js = js.Global().Get("_ndnd_store_js")
@@ -191,11 +191,11 @@ func (a *App) JsApi() js.Value {
 			return nil, a.WaitUserKey(p[0].String())
 		}),
 
-		// set_owner_state_callbacks(load: () => Promise<Uint8Array|undefined>, persist: (state: Uint8Array) => Promise<void>): Promise<void>;
-		"set_owner_state_callbacks": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+		// load_boot_state(load: () => Promise<Uint8Array|undefined>, persist: (state: Uint8Array) => Promise<void>): Promise<void>;
+		"load_boot_state": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			// p[0]: load callback, p[1]: persist callback
-			a.ownerStateLoad = p[0]
-			a.ownerStatePersist = p[1]
+			a.bootStateLoad = p[0]
+			a.bootStatePersist = p[1]
 			return nil, nil
 		}),
 	}
@@ -229,12 +229,10 @@ func (a *App) WaitUserKey(groupStr string) error {
 	if err != nil {
 		return err
 	}
-	detect := group.Append(enc.NewKeywordComponent("KD"))
-
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if trust.Suggest(detect) != nil {
+		if trust.Suggest(group.Append(enc.NewKeywordComponent("KD"))) != nil {
 			return nil
 		}
 		<-ticker.C

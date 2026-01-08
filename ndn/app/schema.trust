@@ -2,6 +2,22 @@
 // Trust policy for the Ownly Workspace application
 // ========================================================
 
+// Standard NDN conventions
+#KEY: "KEY"/_/_/_
+#KEY: "KEY"/_/_ 
+
+// Specific conventions
+#TC: "KEY"/_/"NDNCERT"/_
+#TC: "KEY"/_/"NDNCERT"
+#ANCHOR: "KEY"/_/"self"/_
+#ANCHOR: "KEY"/_/"self"
+#PREKEY: "KEY"/_/"pre"/_
+#PREKEY: "KEY"/_/"pre"
+#CL: "KEY"/_/"32=auth"/_
+#CL: "KEY"/_/"32=auth"
+#ANSI: "KEY"/_/"anchor"/_
+#ANSI: "KEY"/_/"anchor"
+
 // Name of workspace
 #owner: "ndn"/owner10
 #owner: "ndn"/owner20/owner21
@@ -18,34 +34,45 @@
 #user: "ndn"/user50/user51/user52/user53/user54
 #user: "ndn"/user60/user61/user62/user63/user64/user65
 
-// Only owner can sign all user certificates
-// The delegation will happen using a separate CrossSchema
-#user_cert: #owner/wksp/#user/#KEY <= #owner_cert
-#owner_cert: #owner/wksp/#owner/#KEY <= #owner_id_cert
-#owner_id_cert: #owner/#KEY <= #testbed_site_cert | #testbed_root_cert
-
 // Testbed trust model
 #testbed_site_cert: /"ndn"/_/_/#KEY <= #testbed_root_cert
 #testbed_root_cert: /"ndn"/#KEY
+#testbed_owner_cert: #owner/#TC <= #testbed_site_cert | #testbed_root_cert
+#testbed_user_cert: #user/#TC <= #testbed_site_cert | #testbed_root_cert
 
-// Project sync group
-#proj: #owner/wksp/proj
-#proj_data: #proj/#user/_/_ <= #user_cert
-#proj_blob: #proj/#user/_/"32=blob"/_ <= #user_cert
+// Wksp PreAnchor (wksp precert), Anchor and CertList
+#wksp_precert: #owner/wksp/#PREKEY <= #testbed_owner_cert
+#wksp_anchor: #owner/wksp/#ANCHOR
+#wksp_cl: #owner/wksp/#CL <= #wksp_anchor
+
+// Owner and user (pre)cert
+// Cross schema signer must be auhtorized to sign the original data
+#user_precert: #owner/wksp/#user/#PREKEY <= #wksp_anchor
+#owner_cert: #owner/wksp/"32=owner"/#ANSI <= #wksp_anchor
+#user_cert: #owner/wksp/#user/#ANSI <= #wksp_anchor
+
+// Boot group
+#boot_data: #owner/wksp/"32=boot"/"32=owner"/_/_ <= #owner_cert
+#boot_data: #owner/wksp/"32=boot"/#user/_/_ <= #user_precert
+
+// Normal group
+#group: #owner/wksp/group
+#group_data: #group/"32=owner"/_/_ <= #owner_cert
+#group_data: #group/#user/_/_ <= #user_cert
+#group_blob: #group/"32=owner"/_/"32=blob"/_ <= #owner_cert
+#group_blob: #group/#user/_/"32=blob"/_ <= #user_cert
 
 // This rule is only used for finding a valid key for the workspace
-#wksp_detect_key: #owner/wksp/"32=KD" <= #user_cert
+#wksp_detect_key: #owner/wksp/"32=KD" <= #owner_cert | #user_cert
+#wksp_detect_root: #owner/wksp/"32=RD" <= #wksp_anchor
+#wksp_detect_pre: #owner/wksp/"32=PD" <= #user_precert
 
 // Invitations
-#invite: #owner/wksp/"root"/"32=INVITE"/#user <= #owner_cert
+#invite: #owner/wksp/"32=boot"/"32=INVITE"/#user <= #wksp_anchor
 
 // DSK exchange
-#dsk: #owner/wksp/"root"/"32=DSK"/_ <= #user_cert
+#dsk: #owner/wksp/"root"/"32=DSK"/_ <= #owner_cert | #user_cert
 
 // TODO: Repo commands
-#user_testbed_cert: #user/#KEY <= #testbed_site_cert | #testbed_root_cert
-#repo_cmd: #proj/#user/_/"32=repo-cmd" <= #user_testbed_cert
-
-// Standard NDN conventions
-#KEY: "KEY"/_/_/_
-#KEY: "KEY"/_/_
+#repo_cmd: #user/KEY/_/"32=repo-cmd" <= #testbed_user_cert
+#repo_cmd: #owner/KEY/_/"32=repo-cmd" <= #testbed_owner_cert

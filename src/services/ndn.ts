@@ -49,6 +49,12 @@ interface NDNAPI {
   /** Wait until a user key is ready for the workspace */
   wait_user_key(wksp: string): Promise<void>;
 
+  /** Set callbacks to load and persist boot sync state */
+  load_boot_state(
+    load: (group: string) => Promise<Uint8Array | undefined>,
+    persist: (group: string, state: Uint8Array) => Promise<void>,
+  ): Promise<void>;
+
   /** Get a Workspace API */
   get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
 }
@@ -79,8 +85,8 @@ export interface WorkspaceAPI {
     persist_state: (state: Uint8Array) => Promise<void>,
   ): Promise<SvsAloApi>;
 
-  /** Sign an invitation for a given NDN name */
-  sign_invitation(invitee: string): Promise<Uint8Array>;
+  /** Sign and publish an invitation for a given NDN name */
+  sign_and_pub_invitation(invitee: string): Promise<Uint8Array>;
 
   /** Wait for DSK to appear for the given key */
   wait_for_dsk(key: Uint8Array): Promise<Uint8Array>;
@@ -192,6 +198,33 @@ class NDNService {
       );
     });
     this.api = await ndnPromise;
+
+    const bootState = globalThis._o?.bootState;
+    if (bootState && typeof this.api.load_boot_state === 'function') {
+      try {
+        await this.api.load_boot_state(
+          async (group: string) => {
+            try {
+              const state = await bootState.get(group);
+              if (!state || state.length === 0) return undefined;
+              return state;
+            } catch (err) {
+              console.error('Failed to load boot state', err);
+              return undefined;
+            }
+          },
+          async (group: string, state: Uint8Array) => {
+            try {
+              await bootState.put(group, state);
+            } catch (err) {
+              console.error('Failed to persist boot state', err);
+            }
+          },
+        );
+      } catch (err) {
+        console.error('Failed to register boot state persistence', err);
+      }
+    }
   }
 }
 

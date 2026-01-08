@@ -34,12 +34,12 @@ import (
 const SnapshotThreshold = 100
 
 // TODO: change this
-var repoName, _ = enc.NameFromStr("/ndnd/ucla/repo")
+var repoName, _ = enc.NameFromStr("/ndnd/ucla/repo3")
 
 // TODO: this is testbed configuration
 var multicastPrefix, _ = enc.NameFromStr("/ndn/multicast")
 
-//go:embed schema.tlv2
+//go:embed schema.tlv
 var SchemaBytes []byte
 
 // JoinWorkspace joins the workspace with the given name.
@@ -79,7 +79,7 @@ func (a *App) JoinWorkspace(wkspStr_ string, create bool) (wkspStr string, err e
 
 		// Other namespace - check for invitation
 		inviteName := wkspName.
-			Append(enc.NewGenericComponent("root")).
+			Append(enc.NewKeywordComponent("boot")).
 			Append(enc.NewKeywordComponent("INVITE")).
 			Append(idName...)
 
@@ -88,7 +88,7 @@ func (a *App) JoinWorkspace(wkspStr_ string, create bool) (wkspStr string, err e
 
 		// Name to request access from workspace initiator
 		accessRequestName := accessRequestPrefix.
-			Append(enc.NewGenericComponent("root")).
+			Append(enc.NewKeywordComponent("boot")).
 			Append(enc.NewKeywordComponent("INVITE")).
 			Append(idName...)
 
@@ -164,6 +164,15 @@ func (a *App) IsWorkspaceOwner(wkspStr string) (bool, error) {
 func (a *App) onAccessRequest(args ndn.InterestHandlerArgs) {
 	interest := args.Interest
 
+	// Reply with stored invitation. Interest may come from repo or new comer
+	inviteBytes, _ := a.store.Get(interest.Name(), true)
+	if inviteBytes != nil {
+		if err := args.Reply(enc.Wire{inviteBytes}); err != nil {
+			log.Warn(a, "Failed to reply with stored invitation", "name", interest.Name(), "err", err)
+		}
+		return
+	}
+
 	// Get list of access requests, add the new one if not a duplicate
 	access_requests := js.Global().Get("_access_requests")
 	name := interest.Name()
@@ -220,13 +229,24 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	a.SetCmdKey(idSigner)
 	idName := idSigner.KeyName().Prefix(-2) // pop KeyId and KEY
 
-	// Get workspace-specific user key
+	// Announce testbed user key prefix
 	client := object.NewClient(a.engine, a.store, a.trust)
+	client.AnnouncePrefix(ndn.Announcement{
+		Name:    idSigner.KeyName(),
+		Expose:  true,
+		OnError: nil, // TODO
+	})
+	log.Info(nil, "Announcing prefix", "name", "prefix", idSigner.KeyName())
+	clientStarted := false
+	if err := client.Start(); err != nil {
+		return js.Value{}, err
+	}
+	clientStarted = true
 
 	// The store must have invitation, otherwise we are in trouble
 	wkspName, _ := enc.NameFromStr(groupStr)
 	inviteName := wkspName.
-		Append(enc.NewGenericComponent("root")).
+		Append(enc.NewKeywordComponent("boot")).
 		Append(enc.NewKeywordComponent("INVITE")).
 		Append(idName...)
 	invitation, err := client.Store().Get(inviteName, true)
@@ -234,14 +254,57 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		err = fmt.Errorf("No invitation found")
 		return
 	}
-	detect := wkspName.Append(enc.NewKeywordComponent("KD"))
-	userSigner := trust.Suggest(detect)
-	if userSigner == nil {
-		err = fmt.Errorf("no valid user key found")
-		if _, err = a.Bootstrap(client, wkspName, idName, idSigner, enc.Wire{invitation}); err != nil {
-			log.Error(a, "Failed to start the bootstrapping process", "err", err)
-			return
+	detectUser := wkspName.Append(enc.NewKeywordComponent("KD"))
+	detectRoot := wkspName.Append(enc.NewKeywordComponent("RD"))
+	userSigner := trust.Suggest(detectUser)
+	rootSigner := trust.Suggest(detectRoot)
+	var bootAlo *ndn_sync.SvsALO
+
+	isOwner, _ := a.IsWorkspaceOwner(wkspName.String())
+	if isOwner {
+		if rootSigner == nil || userSigner == nil {
+			rootSigner, userSigner, err = a.SetupOwner(wkspName, idSigner)
+			if err != nil {
+				err = fmt.Errorf("Failed to setup workspace anchor and owner")
+				return
+			}
 		}
+		bootAlo = a.StartBootSyncOwner(client, wkspName, rootSigner)
+	} else if userSigner == nil {
+		var preCertWire enc.Wire
+		var recentPreCert bool
+
+		detect := wkspName.Append(enc.NewKeywordComponent("PD"))
+		preUserSigner := trust.Suggest(detect)
+		if preUserSigner != nil {
+			preCertBytes, _ := a.store.Get(preUserSigner.KeyName(), true)
+			if preCertBytes != nil {
+				candidate := enc.Wire{preCertBytes}
+				preCertData, _, perr := spec.Spec{}.ReadData(enc.NewWireView(candidate))
+				if perr == nil {
+					notBefore, _ := preCertData.Signature().Validity()
+					if nb, ok := notBefore.Get(); ok && time.Since(nb) <= 48*time.Hour {
+						log.Info(a, "Reusing existing precert", "name", preCertData.Name())
+						recentPreCert = true
+						preCertWire = candidate
+					} else {
+						recentPreCert = false
+					}
+				} else {
+					recentPreCert = false
+				}
+			}
+		}
+
+		if !recentPreCert && preCertWire == nil {
+			preCertWire, userSigner, err = a.SignPreCert(wkspName, idName, idSigner, enc.Wire{invitation})
+			if err != nil {
+				err = fmt.Errorf("Failed to sign precert")
+				return
+			}
+		}
+		// User don't need join boot group once bootstrapped
+		bootAlo = a.StartBootSyncParticipant(client, wkspName, idName, preCertWire)
 	}
 
 	// Reset encryption keys
@@ -250,14 +313,13 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	a.aes = nil
 
 	// If owner, watch for access request interests
-	isOwner, _ := a.IsWorkspaceOwner(groupStr)
 	nodeName := idName
 	if isOwner {
 		nodeName, _ = enc.NameFromStr("32=owner")
 		// prefix, _ := enc.NameFromStr("/ndn/multicast" + groupStr) // Uncomment if you want to use multicast
 		prefix, _ := enc.NameFromStr(groupStr)
 		accessRequestPrefix := prefix.
-			Append(enc.NewGenericComponent("root")).
+			Append(enc.NewKeywordComponent("boot")).
 			Append(enc.NewKeywordComponent("INVITE"))
 		a.engine.AttachHandler(accessRequestPrefix, a.onAccessRequest)
 		client.AnnouncePrefix(ndn.Announcement{
@@ -309,8 +371,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// start(): Promise<void>;
 		"start": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			if err := client.Start(); err != nil {
-				return nil, err
+			if !clientStarted {
+				if err := client.Start(); err != nil {
+					return nil, err
+				}
+				clientStarted = true
 			}
 
 			return nil, nil
@@ -323,10 +388,15 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// stop(): Promise<void>;
 		"stop": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			if err := client.Stop(); err != nil {
-				return nil, err
+			if clientStarted {
+				if err := client.Stop(); err != nil {
+					return nil, err
+				}
+				clientStarted = false
 			}
-
+			if bootAlo != nil {
+				bootAlo.Stop()
+			}
 			jsutil.ReleaseMap(workspaceJs)
 			return nil, nil
 		}),
@@ -413,19 +483,17 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			return a.SvsAloJs(client, svsAlo, p[2])
 		}),
 
-		// sign_invitation(invitee: string): Promise<Uint8Array>;
-		"sign_invitation": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+		// sign_and_pub_invitation(invitee: string): Promise<Uint8Array>;
+		"sign_and_pub_invitation": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			invitee, err := enc.NameFromStr(p[0].String())
 			if err != nil {
 				return nil, err
 			}
 
-			// Make the invitation name
-			// There is always a "root" project that manages the workspace,
-			// so we reuse that naming convention for the invitation.
-			// /<wksp>/root/32=INVITE/<invitee>/v=<time>
+			// Make the invitation name under boot sync group:
+			// /<wksp>/32=boot/32=INVITE/<invitee>/v=<time>
 			inviteName := wkspName.
-				Append(enc.NewGenericComponent("root")).
+				Append(enc.NewKeywordComponent("boot")).
 				Append(enc.NewKeywordComponent("INVITE")).
 				Append(invitee...).
 				WithVersion(enc.VersionUnixMicro)
@@ -433,7 +501,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			// Make sure we can make this invitation
 			signer := client.SuggestSigner(inviteName)
 			if signer == nil {
-				return nil, fmt.Errorf("no valid signing key")
+				return nil, fmt.Errorf("No valid signing key for invitation")
 			}
 
 			wire, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
@@ -455,7 +523,21 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if err != nil {
 				return nil, err
 			}
-
+			// Publish invitation to boot group with encapsulated Data so repo can store it immediately
+			if bootAlo != nil {
+				cmd := spec_repo.RepoCmd{
+					BlobFetch: &spec_repo.BlobFetch{
+						Data: [][]byte{wire.Join()},
+					},
+				}
+				_, bootAloState, err := bootAlo.Publish(cmd.Encode())
+				if err != nil {
+					return nil, err
+				}
+				a.PersistBootState(bootAlo.GroupPrefix(), bootAloState)
+			} else {
+				return nil, fmt.Errorf("Failed to publish in boot alo")
+			}
 			return jsutil.SliceToJsArray(wire.Join()), nil
 		}),
 
@@ -470,33 +552,6 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	}
 
 	return js.ValueOf(workspaceJs), nil
-}
-
-func (a *App) Bootstrap(client ndn.Client, wkspName enc.Name, idName enc.Name, idSigner ndn.Signer, invitation enc.Wire) (ndn.Signer, error) {
-
-	// If owner, watch for access request interests
-	isOwner, err := a.IsWorkspaceOwner(wkspName.String())
-	if err != nil {
-		return nil, err
-	}
-	if isOwner {
-		rootSigner, ownerSigner, err := a.SetupOwner(wkspName, idSigner)
-		if err != nil {
-			log.Error(a, "Failed to setup workspace", "err", err)
-			return nil, err
-		}
-		a.StartBootSyncOwner(client, wkspName, rootSigner)
-		return ownerSigner, nil
-	} else {
-		preCertWire, userSigner, err := a.SignPreCert(wkspName, idName, idSigner, invitation)
-		if err != nil {
-			log.Error(a, "Failed to sign precert", "err", err)
-			return nil, err
-		}
-
-		a.StartBootSyncParticipant(client, wkspName, idName, preCertWire)
-		return userSigner, nil
-	}
 }
 
 func (a *App) SignPreCert(wkspName enc.Name, idName enc.Name, idSigner ndn.Signer, invitation enc.Wire) (enc.Wire, ndn.Signer, error) {
@@ -648,7 +703,7 @@ func (a *App) SvsAloJs(
 
 			// Notify repo to start
 			a.ExecWithConnectivity(func() {
-				a.NotifyRepoJoin(client, alo.GroupPrefix(), alo.DataPrefix())
+				a.NotifyRepoJoin(client, alo.GroupPrefix(), alo.DataPrefix(), true)
 			})
 
 			if err := alo.Start(); err != nil {

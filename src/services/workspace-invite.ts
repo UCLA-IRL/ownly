@@ -50,11 +50,9 @@ export class WorkspaceInviteManager {
       throw new Error(`Invitation for ${invitee.name} already exists`);
     }
 
-    // Add invitee
+    // Publish the invitation first; only update Yjs doc on success
+    await this.invite(invitee.name);
     this.inviteeProfiles.set(invitee.name, invitee);
-
-    // Publish the invitation
-    await this.invite(invitee.name); // Publish the invitation
   }
 
   /**
@@ -102,12 +100,13 @@ export class WorkspaceInviteManager {
    * @param name NDN name to invite
    */
   public async invite(name: string): Promise<void> {
-    // Sign the invitation
-    const invite = await this.api.sign_invitation(name);
-
-    // Alert repo to fetch the invitation
-    // name is unused when encapsulated
-    await this.provider.svs.pub_blob_fetch(String(), invite);
+    // Sign and publish the invitation, surfacing backend errors to the UI
+    try {
+      await this.api.sign_and_pub_invitation(name);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to publish invitation: ${reason}`);
+    }
   }
 
   /**

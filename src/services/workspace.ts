@@ -8,6 +8,7 @@ import { SvsProvider } from '@/services/svs-provider';
 
 import { GlobalBus } from '@/services/event-bus';
 import * as utils from '@/utils/index';
+import { Toast } from '@/utils/toast';
 
 import type { SvsAloApi, WorkspaceAPI } from '@/services/ndn';
 import type { Router } from 'vue-router';
@@ -52,7 +53,14 @@ export class Workspace {
       await api.start();
 
       // Wait until user key is ready before proceeding.
-      await ndn.api.wait_user_key(metadata.name);
+      const certToast = Toast.loading('Waiting for certificate issuance...');
+      try {
+        await ndn.api.wait_user_key(metadata.name);
+        await certToast.success('Certificate Ready');
+      } catch (err) {
+        await certToast.error(`Certificate wait failed: ${err}`);
+        throw err;
+      }
 
       // Check if we have the encryption keys
       if (!metadata.psk) throw new Error('Missing PSK');

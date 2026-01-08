@@ -12,24 +12,24 @@ import (
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 )
 
-func (a *App) NotifyRepoJoin(client ndn.Client, group enc.Name, dataPrefix enc.Name) {
+func (a *App) NotifyRepoJoin(client ndn.Client, group enc.Name, dataPrefix enc.Name, snapshot bool) {
 	// Wait for 1s so that routes get registered
 	time.Sleep(time.Second)
-
-	repoCmd := spec_repo.RepoCmd{
-		SyncJoin: &spec_repo.SyncJoin{
-			Protocol: &spec.NameContainer{Name: spec_repo.SyncProtocolSvsV3},
-			Group:    &spec.NameContainer{Name: group},
-			HistorySnapshot: &spec_repo.HistorySnapshotConfig{
-				Threshold: SnapshotThreshold,
-			},
-			MulticastPrefix: &spec.NameContainer{Name: multicastPrefix},
-		},
+	syncJoin := &spec_repo.SyncJoin{
+		Protocol:        &spec.NameContainer{Name: spec_repo.SyncProtocolSvsV3},
+		Group:           &spec.NameContainer{Name: group},
+		MulticastPrefix: &spec.NameContainer{Name: multicastPrefix},
 	}
-	repoCmdNamePrefix, _ := enc.NameFromStr("32=repo-cmd")
+	if snapshot {
+		syncJoin.HistorySnapshot = &spec_repo.HistorySnapshotConfig{
+			Threshold: SnapshotThreshold,
+		}
+	}
+	idSigner, _ := a.GetTestbedKey()
+	repoCmd := spec_repo.RepoCmd{SyncJoin: syncJoin}
 	client.ExpressCommand(
 		repoName,
-		repoCmdNamePrefix.Append(dataPrefix...),
+		idSigner.KeyName().Append(enc.NewKeywordComponent("repo-cmd")),
 		repoCmd.Encode(),
 		func(w enc.Wire, err error) {
 			if err != nil {
@@ -48,10 +48,10 @@ func (a *App) NotifyRepoLeave(client ndn.Client, group enc.Name, dataPrefix enc.
 			Group:    &spec.NameContainer{Name: group},
 		},
 	}
-	repoCmdNamePrefix, _ := enc.NameFromStr("32=repo-cmd")
+	idSigner, _ := a.GetTestbedKey()
 	client.ExpressCommand(
 		repoName,
-		repoCmdNamePrefix.Append(dataPrefix...),
+		idSigner.KeyName().Append(enc.NewKeywordComponent("repo-cmd")),
 		repoCmd.Encode(),
 		func(w enc.Wire, err error) {
 			if err != nil {
