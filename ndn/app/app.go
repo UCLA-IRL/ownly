@@ -221,18 +221,16 @@ func getTrustConfig(keychain ndn.KeyChain) (trust *security.TrustConfig, err err
 
 // WaitUserKey blocks until trust schema suggests a valid user key for the workspace.
 func (a *App) WaitUserKey(groupStr string) error {
-	trust, err := getTrustConfig(a.keychain)
-	if err != nil {
-		return err
-	}
 	group, err := enc.NameFromStr(groupStr)
 	if err != nil {
 		return err
 	}
+
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if trust.Suggest(group.Append(enc.NewKeywordComponent("KD"))) != nil {
+		trust, err := getTrustConfig(a.keychain)
+		if err == nil && trust.Suggest(group.Append(enc.NewKeywordComponent("KD"))) != nil {
 			return nil
 		}
 		<-ticker.C
