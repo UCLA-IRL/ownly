@@ -296,13 +296,12 @@ func (a *App) SignFinalCert(appCert enc.Wire, rootSigner ndn.Signer) (enc.Wire, 
 	}
 
 	return security.SignCert(security.SignCertArgs{
-		Data:        certData,
-		Signer:      rootSigner,
-		SignerName:  rootSigner.KeyName().Append(enc.NewGenericComponent("self")),
-		IssuerId:    enc.NewGenericComponent("anchor"),
-		NotBefore:   time.Now().Add(-time.Hour),
-		NotAfter:    time.Now().AddDate(10, 0, 0), // for now
-		CrossSchema: certData.CrossSchema(),
+		Data:       certData,
+		Signer:     rootSigner,
+		SignerName: rootSigner.KeyName().Append(enc.NewGenericComponent("self")),
+		IssuerId:   enc.NewGenericComponent("anchor"),
+		NotBefore:  time.Now().Add(-time.Hour),
+		NotAfter:   time.Now().AddDate(10, 0, 0), // for now
 	})
 }
 
