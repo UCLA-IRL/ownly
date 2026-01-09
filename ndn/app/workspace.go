@@ -328,14 +328,6 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			OnError: nil, // TODO
 		})
 		log.Info(nil, "Watching for access requests")
-		// Need to join boot process anyway
-		detect := wkspName.Append(enc.NewKeywordComponent("RD"))
-		rootSigner := trust.Suggest(detect)
-		if rootSigner == nil {
-			log.Error(a, "Missing wksp root key")
-			return
-		}
-		a.StartBootSyncOwner(client, wkspName, rootSigner)
 	}
 
 	// After bootstrapping
@@ -396,6 +388,13 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}
 			if bootAlo != nil {
 				bootAlo.Stop()
+				routes := []enc.Name{
+					bootAlo.SyncPrefix(),
+					bootAlo.DataPrefix(),
+				}
+				for _, route := range routes {
+					client.WithdrawPrefix(route, nil)
+				}
 			}
 			jsutil.ReleaseMap(workspaceJs)
 			return nil, nil

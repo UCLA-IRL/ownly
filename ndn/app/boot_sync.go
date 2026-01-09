@@ -134,15 +134,6 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 		return nil
 	}
 
-	// If we already have a signer for data under /wksp/<user>/32=KD, skip publishing precert.
-	probeName := wkspName.Append(userName...).Append(enc.NewKeywordComponent("KD"))
-	// SuggestSigner MUST return a unexpired signer
-	userSigner := client.SuggestSigner(probeName)
-	if userSigner != nil {
-		log.Info(a, "Already bootstrapped", "name", userSigner.KeyName())
-		return nil
-	}
-
 	if _, state, err := alo.Publish(enc.Wire{preCertName.Bytes()}); err != nil {
 		log.Error(a, "Failed to publish precert", "err", err)
 	} else {
