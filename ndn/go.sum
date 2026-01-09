@@ -29,8 +29,8 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/klauspost/compress v1.18.0 h1:c/Cqfb0r+Yi+JtIEq73FWXVkRonBlf0CRNYc8Zttxdo=
 github.com/klauspost/compress v1.18.0/go.mod h1:2Pp+KzxcywXVXMr50+X0Q/Lsb43OQHYWRCY2AiWywWQ=
-github.com/named-data/ndnd v1.5.4-0.20260103175005-b51b5dbe29da h1:n2KrIAJCzTjiVQ3HYP+4cGg976xAHoGsMqyDQ+doZpQ=
-github.com/named-data/ndnd v1.5.4-0.20260103175005-b51b5dbe29da/go.mod h1:qkg4kql6i6J+O0AsQMPTgks3hoiwcXanGGrtU6hLUNU=
+github.com/named-data/ndnd v1.5.4-0.20260109212334-f06a07be1c4c h1:Fjq5O8Q28HCuSTShWSriPJDd68yU+m0oKKRFpcuM0zM=
+github.com/named-data/ndnd v1.5.4-0.20260109212334-f06a07be1c4c/go.mod h1:qkg4kql6i6J+O0AsQMPTgks3hoiwcXanGGrtU6hLUNU=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72 h1:qLC7fQah7D6K1B0ujays3HV9gkFtllcxhzImRR7ArPQ=
