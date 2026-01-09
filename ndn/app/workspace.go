@@ -608,7 +608,7 @@ func (a *App) SetupOwner(wkspName enc.Name, idSigner ndn.Signer) (ndn.Signer, nd
 	// Generate a pre trust anchor
 	preAnchorWire, err := security.SignCert(security.SignCertArgs{
 		Data:      rootSecret,
-		Signer:    idSigner,
+		Signer:    idSigner, // we should use SignerName to indicate the exact issuerId
 		IssuerId:  enc.NewGenericComponent("pre"),
 		NotBefore: time.Now().Add(-time.Hour),
 		NotAfter:  time.Now().AddDate(0, 0, 90),

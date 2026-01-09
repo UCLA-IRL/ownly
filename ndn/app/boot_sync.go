@@ -196,7 +196,7 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 
 			// Skip if we already have a final cert for this precert.
 			if keyName, err := security.GetKeyNameFromCertName(preCertName); err == nil {
-				finalCertPrefix := keyName.Append(enc.NewGenericComponent("owner"))
+				finalCertPrefix := keyName.Append(enc.NewGenericComponent("anchor"))
 				if finalCert, _ := client.LatestLocal(finalCertPrefix); finalCert != nil {
 					log.Info(a, "Already have a final cert for precert key, skipping")
 					return
