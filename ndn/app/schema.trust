@@ -59,6 +59,8 @@
 #group: #owner/wksp/group
 #group_data: #group/"32=owner"/_/_ <= #owner_cert
 #group_data: #group/#user/_/_ <= #user_cert
+#group_awareness: #group/"32=owner"/_/"32=aware"/_ <= #owner_cert
+#group_awareness: #group/#user/_/"32=aware"/_ <= #user_cert
 #group_blob: #group/"32=owner"/_/"32=blob"/_ <= #owner_cert
 #group_blob: #group/#user/_/"32=blob"/_ <= #user_cert
 
