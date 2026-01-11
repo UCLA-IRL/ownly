@@ -27,8 +27,30 @@ interface NDNAPI {
   has_testbed_key(): Promise<boolean>;
   /** Check if the testbed certificate is expiring soon (within a week) */
   is_testbed_cert_expiring_soon(): Promise<boolean>;
-  /** Get the user's identity key */
-  get_identity_name(): Promise<string>;
+  /** Get the full testbed key name */
+  get_testbed_key(): Promise<string>;
+  /** List locally managed identity keys and authenticated peer identities */
+  list_identity_keys(): Promise<{
+    identity: string;
+    local: IdentityKeyInfo[];
+    peers: IdentityKeyInfo[];
+  }>;
+  /** Generate a new managed identity key pair */
+  generate_identity_key(): Promise<IdentityKeyInfo>;
+  /** Import an existing identity key pair (MarshalSecret format) */
+  import_identity_key(secret: Uint8Array): Promise<IdentityKeyInfo>;
+  /** Import peer self-signed certificates */
+  import_peer_certs(blobs: Uint8Array[]): Promise<IdentityKeyInfo[]>;
+  /** Delete a managed identity or peer entry */
+  delete_identity_entry(certName: string): Promise<void>;
+  /** Export a managed identity key pair as MarshalSecret */
+  export_identity_secret(keyName: string): Promise<Uint8Array>;
+  /** Export authenticated peer certificates */
+  export_peer_certs(names: string[]): Promise<Uint8Array[]>;
+  /** Export your identity certificate (self-signed) */
+  export_identity_cert(): Promise<Uint8Array>;
+  /** Export a managed identity certificate by name */
+  export_identity_cert_by_name(certName: string): Promise<Uint8Array>;
 
   /** Connect to the global NDN testbed */
   connect_testbed(): Promise<void>;
@@ -58,6 +80,14 @@ interface NDNAPI {
   /** Get a Workspace API */
   get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
 }
+
+export type IdentityKeyInfo = {
+  identity: string;
+  keyName: string;
+  certName: string;
+  hasPrivate: boolean;
+  source: 'local' | 'peer';
+};
 
 export interface WorkspaceAPI {
   /** Name of this user / node */

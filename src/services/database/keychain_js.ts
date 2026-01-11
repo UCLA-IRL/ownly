@@ -9,6 +9,9 @@ export interface KeyChainJS {
 
   // Write a key or certificate to the keychain
   write(name: string, blob: Uint8Array): Promise<void>;
+
+  // Remove keychain entries by their stored filename
+  remove(name: string | string[]): Promise<void>;
 }
 
 import Dexie from 'dexie';
@@ -20,7 +23,7 @@ import Dexie from 'dexie';
  */
 export class KeyChainDexie implements KeyChainJS {
   private db = new Dexie('keychain') as Dexie & {
-    keys: Dexie.Table<{ name: string; blob: Uint8Array }, number>;
+    keys: Dexie.Table<{ name: string; blob: Uint8Array }, string>;
   };
 
   constructor() {
@@ -36,5 +39,10 @@ export class KeyChainDexie implements KeyChainJS {
 
   public async write(name: string, blob: Uint8Array) {
     await this.db.keys.put({ name, blob });
+  }
+
+  public async remove(name: string | string[]) {
+    const names = Array.isArray(name) ? name : [name];
+    await this.db.keys.bulkDelete(names);
   }
 }

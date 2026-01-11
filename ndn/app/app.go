@@ -135,13 +135,13 @@ func (a *App) JsApi() js.Value {
 			return notAfter.Before(time.Now().Add(7 * 24 * time.Hour)), nil
 		}),
 
-		// get_identity_name(): Promise<string>;
-		"get_identity_name": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+		// get_testbed_key(): Promise<string>;
+		"get_testbed_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			key, _ := a.GetTestbedKey()
 			if key == nil {
 				return nil, fmt.Errorf("no testbed key")
 			}
-			return js.ValueOf(key.KeyName().Prefix(-2).String()), nil
+			return js.ValueOf(key.KeyName().String()), nil
 		}),
 
 		// connect_testbed(): Promise<void>;
@@ -197,6 +197,112 @@ func (a *App) JsApi() js.Value {
 			a.bootStateLoad = p[0]
 			a.bootStatePersist = p[1]
 			return nil, nil
+		}),
+
+		// list_identity_keys(): Promise<{identity: string; local: any[]; peers: any[]}>;
+		"list_identity_keys": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			return a.identityOverview()
+		}),
+
+		// generate_identity_key(): Promise<any>;
+		"generate_identity_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			entry, err := a.generateIdentityKey()
+			if err != nil {
+				return nil, err
+			}
+			return entry.toJs(), nil
+		}),
+
+		// import_identity_key(secret: Uint8Array): Promise<any>;
+		"import_identity_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			entry, err := a.importIdentityKey(jsutil.JsArrayToSlice(p[0]))
+			if err != nil {
+				return nil, err
+			}
+			return entry.toJs(), nil
+		}),
+
+		// import_peer_certs(blobs: Uint8Array[]): Promise<any[]>;
+		"import_peer_certs": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			blobArr := p[0]
+			blobs := make([][]byte, blobArr.Length())
+			for i := range blobs {
+				blobs[i] = jsutil.JsArrayToSlice(blobArr.Index(i))
+			}
+
+			entries, err := a.importPeerCerts(blobs)
+			if err != nil {
+				return nil, err
+			}
+			return entriesToJs(entries), nil
+		}),
+
+		// delete_identity_entry(certName: string): Promise<void>;
+		"delete_identity_entry": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			name, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			return nil, a.deleteIdentityEntry(name)
+		}),
+
+		// export_identity_secret(keyName: string): Promise<Uint8Array>;
+		"export_identity_secret": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			keyName, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			secret, err := a.exportIdentitySecret(keyName)
+			if err != nil {
+				return nil, err
+			}
+			return jsutil.SliceToJsArray(secret), nil
+		}),
+
+		// export_peer_certs(names: string[]): Promise<Uint8Array[]>;
+		"export_peer_certs": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			raw := p[0]
+			names := make([]enc.Name, 0, raw.Length())
+			for i := 0; i < raw.Length(); i++ {
+				name, err := enc.NameFromStr(raw.Index(i).String())
+				if err != nil {
+					return nil, err
+				}
+				names = append(names, name)
+			}
+
+			certs, err := a.exportPeerCerts(names)
+			if err != nil {
+				return nil, err
+			}
+
+			out := js.Global().Get("Array").New(len(certs))
+			for i, wire := range certs {
+				out.SetIndex(i, jsutil.SliceToJsArray(wire))
+			}
+			return out, nil
+		}),
+
+		// export_identity_cert(): Promise<Uint8Array>;
+		"export_identity_cert": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			wire, err := a.exportIdentityCert()
+			if err != nil {
+				return nil, err
+			}
+			return jsutil.SliceToJsArray(wire), nil
+		}),
+
+		// export_identity_cert_by_name(certName: string): Promise<Uint8Array>;
+		"export_identity_cert_by_name": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			certName, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			wire, err := a.exportIdentityCertByName(certName)
+			if err != nil {
+				return nil, err
+			}
+			return jsutil.SliceToJsArray(wire), nil
 		}),
 	}
 

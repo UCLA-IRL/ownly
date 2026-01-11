@@ -139,7 +139,7 @@
     <AddChannelModal :show="showChannelModal" @close="showChannelModal = false" />
     <AddProjectModal :show="showProjectModal" @close="showProjectModal = false" />
     <InvitePeopleModal :show="showInviteModal" @close="showInviteModal = false" />
-    <QRIdentityModal :show="showIdentity" @close="showIdentity = false" />
+    <QrModal :show="showIdentity" @close="showIdentity = false" />
 
     <ModalComponent :show="showAgentModal" @close="showAgentModal = false">
       <AgentBrowser />
@@ -179,7 +179,7 @@ import { Toast } from '@/utils/toast';
 
 import type { IChatChannel, IProject, IProjectFile } from '@/services/types';
 import InvitePeopleModal from './InvitePeopleModal.vue';
-import QRIdentityModal from './QRIdentityModal.vue';
+import QrModal from './QrModal.vue';
 
 const route = useRoute();
 //const router = useRouter();
