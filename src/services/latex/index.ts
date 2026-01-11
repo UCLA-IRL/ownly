@@ -5,7 +5,15 @@ import type { WorkspaceProj } from '../workspace-proj';
 
 let activeProject: string | null = null;
 let activeEngine: PdfTeXEngine | null = null;
-let texlive_endpoint = 'https://texlive.emaily.re/';
+// the original endpoint isn't working
+// check what https://texlyre.github.io/texlyre/ uses if this doesn't work
+//
+// original
+// let texlive_endpoint = 'https://texlive2.swiftlatex.com';
+// 2nd try
+// let texlive_endpoint = 'https://texlive.emaily.re/';
+// 3rd try
+let texlive_endpoint = 'https://texlive.texlyre.org';
 
 export async function compile(project: WorkspaceProj): Promise<Uint8Array> {
   let progress: typeof Toast.Handle | undefined;
