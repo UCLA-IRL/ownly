@@ -13,6 +13,8 @@
 #ANCHOR: "KEY"/_/"self"
 #PREKEY: "KEY"/_/"pre"/_
 #PREKEY: "KEY"/_/"pre"
+#IDCERT: "KEY"/_/"identity"/_
+#IDCERT: "KEY"/_/"identity"
 #CL: "KEY"/_/"32=auth"/_
 #CL: "KEY"/_/"32=auth"
 #ANSI: "KEY"/_/"anchor"/_
@@ -40,20 +42,28 @@
 #testbed_owner_cert: #owner/#TC <= #testbed_site_cert | #testbed_root_cert
 #testbed_user_cert: #user/#TC <= #testbed_site_cert | #testbed_root_cert
 
-// Wksp PreAnchor (wksp precert), Anchor and CertList
-#wksp_precert: #owner/wksp/#PREKEY <= #testbed_owner_cert
-#wksp_anchor: #owner/wksp/#ANCHOR
-#wksp_cl: #owner/wksp/#CL <= #wksp_anchor
+// User and owner identities
+#ownerid_cert: #owner/#IDCERT
+#userid_cert: #user/#IDCERT
 
-// Owner and user (pre)cert
-// Cross schema signer must be auhtorized to sign the original data
+// Wksp Anchor
+#wksp_anchor: #owner/wksp/#ANCHOR
+
+// Mutual authentication (part 1)
+#wksp_cl: #owner/wksp/#CL <= #wksp_anchor
+#wksp_precert: #owner/wksp/#PREKEY <= #ownerid_cert
+
+// Mutual authentication (part 2)
+// Cross schema signer must be authorized to sign the original data
 #user_precert: #owner/wksp/#user/#PREKEY <= #wksp_anchor
+
+// Final certificates
 #owner_cert: #owner/wksp/"32=owner"/#ANSI <= #wksp_anchor
 #user_cert: #owner/wksp/#user/#ANSI <= #wksp_anchor
 
 // Boot group
 #boot_data: #owner/wksp/"32=boot"/"32=owner"/_/_ <= #owner_cert
-#boot_data: #owner/wksp/"32=boot"/#user/_/_ <= #user_precert
+#boot_data: #owner/wksp/"32=boot"/#user/_/_ <= #user_precert | #user_cert
 
 // Normal group
 #group: #owner/wksp/group
@@ -68,6 +78,7 @@
 #wksp_detect_key: #owner/wksp/"32=KD" <= #owner_cert | #user_cert
 #wksp_detect_root: #owner/wksp/"32=RD" <= #wksp_anchor
 #wksp_detect_pre: #owner/wksp/"32=PD" <= #user_precert
+#wksp_detect_tb: #owner/wksp/"32=TD" <= #testbed_owner_cert | #testbed_user_cert
 
 // Invitations
 #invite: #owner/wksp/"32=boot"/"32=INVITE"/#user <= #wksp_anchor
@@ -75,6 +86,8 @@
 // DSK exchange
 #dsk: #owner/wksp/"root"/"32=DSK"/_ <= #owner_cert | #user_cert
 
-// TODO: Repo commands
-#repo_cmd: #user/KEY/_/"32=repo-cmd" <= #testbed_user_cert
-#repo_cmd: #owner/KEY/_/"32=repo-cmd" <= #testbed_owner_cert
+// Repo commands, everyone can issue sync join with security config
+#repo_cmd: #owner/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sync-cfg" <= #testbed_owner_cert
+#repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sync-cfg" <= #testbed_user_cert
+#repo_cmd: #owner/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_owner_cert
+#repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_user_cert

@@ -52,13 +52,46 @@ func (a *App) identityName() (enc.Name, error) {
 	return signer.KeyName().Prefix(-2), nil
 }
 
+func (a *App) getIdentitySigner() (ndn.Signer, error) {
+	entries, err := a.localIdentityEntries()
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no identity key found")
+	}
+
+	primary := selectPrimaryIdentityEntry(entries)
+	keyName, err := enc.NameFromStr(primary.KeyName)
+	if err != nil {
+		return nil, err
+	}
+	idName, err := security.GetIdentityFromKeyName(keyName)
+	if err != nil {
+		return nil, err
+	}
+
+	id := a.keychain.IdentityByName(idName)
+	if id == nil {
+		return nil, fmt.Errorf("identity key not found")
+	}
+	for _, key := range id.Keys() {
+		if key.KeyName().Equal(keyName) {
+			return key.Signer(), nil
+		}
+	}
+
+	return nil, fmt.Errorf("identity key not found")
+}
+
 func (a *App) makeIdentityCert(signer ndn.Signer) (enc.Wire, ndn.Data, error) {
+	certName := signer.KeyName().Append(identityIssuer)
+	ctxSigner := sig.WithKeyLocator(signer, certName)
 	wire, err := security.SelfSign(security.SignCertArgs{
-		Signer:     signer,
-		SignerName: signer.KeyName().Append(identityIssuer),
-		IssuerId:   identityIssuer,
-		NotBefore:  time.Now().Add(-time.Hour),
-		NotAfter:   time.Now().AddDate(10, 0, 0), // 10 year is enough?
+		Signer:    ctxSigner,
+		IssuerId:  identityIssuer,
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().AddDate(10, 0, 0), // 10 year is enough?
 	})
 	if err != nil {
 		return nil, nil, err
@@ -310,6 +343,51 @@ func (a *App) peerIdentityEntries() ([]identityEntry, error) {
 	}
 
 	return entries, nil
+}
+
+func (a *App) promoteIdentityAnchors() error {
+
+	local, err := a.localIdentityEntries()
+	if err != nil {
+		return err
+	}
+	peers, err := a.peerIdentityEntries()
+	if err != nil {
+		return err
+	}
+
+	promote := func(certNameStr string) {
+		certName, err := enc.NameFromStr(certNameStr)
+		if err != nil {
+			log.Warn(a, "Failed to parse trust anchor name", "name", certNameStr, "err", err)
+			return
+		}
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			log.Warn(a, "Trust anchor certificate missing from store", "name", certNameStr)
+			return
+		}
+		certData, _, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{wire}))
+		if err != nil {
+			log.Warn(a, "Failed to parse trust anchor certificate", "name", certNameStr, "err", err)
+			return
+		}
+		a.trust.PromoteAnchor(certData, enc.Wire{wire})
+	}
+
+	for _, entry := range local {
+		log.Warn(a, "promoting", "name", entry.CertName)
+		promote(entry.CertName)
+	}
+	for _, entry := range peers {
+		log.Warn(a, "promoting", "name", entry.CertName)
+		promote(entry.CertName)
+	}
+
+	return nil
 }
 
 func (a *App) localIdentityHasKeyName(keyName enc.Name) (bool, error) {
@@ -624,11 +702,9 @@ func (a *App) deleteIdentityEntry(certName enc.Name) error {
 	}
 	a.keychain = kc
 
-	trust, err := getTrustConfig(a.keychain)
 	if err != nil {
 		return err
 	}
-	a.trust = trust
 	return nil
 }
 

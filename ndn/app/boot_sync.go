@@ -12,6 +12,7 @@ import (
 	"github.com/named-data/ndnd/std/ndn"
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 	"github.com/named-data/ndnd/std/security"
+	sig "github.com/named-data/ndnd/std/security/signer"
 	ndn_sync "github.com/named-data/ndnd/std/sync"
 	"github.com/named-data/ndnd/std/types/optional"
 	jsutil "github.com/named-data/ndnd/std/utils/js"
@@ -122,8 +123,8 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 			}
 			log.Info(a, "Inserted and stored final cert", "name", data.Name())
 
-			// quit boot group
-			a.StopBootSyncAlo(client, alo, routes)
+			// // quit boot group
+			// a.StopBootSyncAlo(client, alo, routes)
 		} else {
 			// should be repo command, skip
 		}
@@ -294,14 +295,15 @@ func (a *App) SignFinalCert(appCert enc.Wire, rootSigner ndn.Signer) (enc.Wire, 
 	if err != nil {
 		return nil, err
 	}
+	rootCertName := rootSigner.KeyName().Append(enc.NewGenericComponent("self"))
+	rootCtxSigner := sig.WithKeyLocator(rootSigner, rootCertName)
 
 	return security.SignCert(security.SignCertArgs{
-		Data:       certData,
-		Signer:     rootSigner,
-		SignerName: rootSigner.KeyName().Append(enc.NewGenericComponent("self")),
-		IssuerId:   enc.NewGenericComponent("anchor"),
-		NotBefore:  time.Now().Add(-time.Hour),
-		NotAfter:   time.Now().AddDate(10, 0, 0), // for now
+		Data:      certData,
+		Signer:    rootCtxSigner,
+		IssuerId:  enc.NewGenericComponent("anchor"),
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().AddDate(10, 0, 0), // for now
 	})
 }
 

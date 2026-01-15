@@ -9,6 +9,7 @@ import (
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
+	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
 	"github.com/named-data/ndnd/std/object/storage"
 	"github.com/named-data/ndnd/std/security"
@@ -40,9 +41,6 @@ type App struct {
 	// Tracks boot sync groups we have already joined to avoid duplicates
 	bootSyncs map[string]bool
 
-	// Known owner trust anchor certificate names
-	ownerAnchors map[string]bool
-
 	// JS callbacks to load/persist owner cert SVS state
 	bootStateLoad    js.Value
 	bootStatePersist js.Value
@@ -65,11 +63,10 @@ func NewApp() *App {
 	}
 
 	a := &App{
-		store:        store,
-		keychain:     kc,
-		dskReqs:      make(map[string]*time.Timer),
-		bootSyncs:    make(map[string]bool),
-		ownerAnchors: make(map[string]bool),
+		store:     store,
+		keychain:  kc,
+		dskReqs:   make(map[string]*time.Timer),
+		bootSyncs: make(map[string]bool),
 	}
 	a.initialize()
 	return a
@@ -89,11 +86,10 @@ func NewNodeApp() *App {
 	}
 
 	a := &App{
-		store:        store,
-		keychain:     kc,
-		dskReqs:      make(map[string]*time.Timer),
-		bootSyncs:    make(map[string]bool),
-		ownerAnchors: make(map[string]bool),
+		store:     store,
+		keychain:  kc,
+		dskReqs:   make(map[string]*time.Timer),
+		bootSyncs: make(map[string]bool),
 	}
 
 	a.initialize()
@@ -109,7 +105,7 @@ func (a *App) initialize() {
 		panic(err)
 	}
 
-	// Testbed trust config
+	// trust config
 	a.trust, err = getTrustConfig(a.keychain)
 	if err != nil {
 		panic(err)
@@ -309,7 +305,6 @@ func (a *App) JsApi() js.Value {
 	return js.ValueOf(api)
 }
 
-// GetTestbedKey returns an instance of the trust configuration
 func getTrustConfig(keychain ndn.KeyChain) (trust *security.TrustConfig, err error) {
 	schema, err := trust_schema.NewLvsSchema(SchemaBytes)
 	if err != nil {
@@ -335,10 +330,56 @@ func (a *App) WaitUserKey(groupStr string) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		trust, err := getTrustConfig(a.keychain)
-		if err == nil && trust.Suggest(group.Append(enc.NewKeywordComponent("KD"))) != nil {
+		if err == nil && a.trust.Suggest(group.Append(enc.NewKeywordComponent("KD"))) != nil {
 			return nil
 		}
 		<-ticker.C
 	}
+}
+
+func (a *App) GatherAnchors() [][]byte {
+	anchors := make([][]byte, 0)
+	seen := make(map[string]struct{})
+
+	add := func(nameStr string) {
+		name, err := enc.NameFromStr(nameStr)
+		if err != nil {
+			log.Warn(a, "Failed to parse cert name for repo anchor", "name", nameStr, "err", err)
+			return
+		}
+		key := name.String()
+		if _, ok := seen[key]; ok {
+			return
+		}
+
+		wire, _ := a.store.Get(name, false)
+		if wire == nil && len(name) > 0 {
+			wire, _ = a.store.Get(name.Prefix(-1), true)
+		}
+		if wire == nil {
+			log.Warn(a, "Missing cert wire for repo anchor", "name", name)
+			return
+		}
+
+		anchors = append(anchors, wire)
+		seen[key] = struct{}{}
+	}
+
+	if local, err := a.localIdentityEntries(); err == nil {
+		for _, entry := range local {
+			add(entry.CertName)
+		}
+	} else {
+		log.Warn(a, "Failed to list local identity certs for repo anchor set", "err", err)
+	}
+
+	if peers, err := a.peerIdentityEntries(); err == nil {
+		for _, entry := range peers {
+			add(entry.CertName)
+		}
+	} else {
+		log.Warn(a, "Failed to list peer identity certs for repo anchor set", "err", err)
+	}
+
+	return anchors
 }
