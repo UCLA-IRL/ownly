@@ -72,8 +72,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import QRCode from 'qrcode';
 
 import ModalComponent from '@/components/ModalComponent.vue';
-import ndn from '@/services/ndn';
+import ndn, { type IdentityKeyInfo } from '@/services/ndn';
 import { bytesToBase64, encryptSecret } from '@/utils/qr-crypto';
+import { deriveIdentityFromKeyName, formatIdentityFilename } from '@/utils/identity';
 
 const props = defineProps<{
   show: boolean;
@@ -94,6 +95,8 @@ const scanMessage = computed(
 );
 
 const name = ref(String());
+const identityKeyName = ref(String());
+const identityEntry = ref<IdentityKeyInfo | null>(null);
 const certQrimg = ref(String());
 const secretQrimg = ref(String());
 const identityCert = ref<Uint8Array | null>(null);
@@ -126,19 +129,15 @@ watch(
 
 onBeforeUnmount(stopScan);
 
-function deriveIdentityFromKeyName(keyName: string): string {
-  const parts = keyName.split('/').filter(Boolean);
-  if (parts.length < 3) return keyName;
-  return '/' + parts.slice(0, -2).join('/');
-}
-
 async function createShare() {
   const testbedKey = await ndn.api.get_testbed_key();
   name.value = deriveIdentityFromKeyName(testbedKey);
+  identityKeyName.value = testbedKey;
 
   identityCert.value = await ndn.api.export_identity_cert();
   const overview = await ndn.api.list_identity_keys();
   const localWithKey = overview.local?.find((k) => k.hasPrivate);
+  identityEntry.value = localWithKey ?? overview.local?.[0] ?? null;
   if (localWithKey?.keyName) {
     identitySecret.value = await ndn.api.export_identity_secret(localWithKey.keyName);
   } else {
@@ -154,6 +153,12 @@ async function createShare() {
 
 function downloadCert() {
   if (!identityCert.value?.length) return;
+  const source = identityEntry.value ?? { identity: name.value, keyName: identityKeyName.value };
+  const filename = formatIdentityFilename(source, {
+    prefix: 'identity',
+    ext: 'cert',
+    fallbackIdentity: name.value,
+  });
   const view = new Uint8Array(identityCert.value);
   const blob = new Blob([new Uint8Array(view).buffer as ArrayBuffer], {
     type: 'application/octet-stream',
@@ -161,7 +166,7 @@ function downloadCert() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'ownly-identity.cert';
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

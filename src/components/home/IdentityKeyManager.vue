@@ -211,6 +211,7 @@ import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import ModalComponent from '@/components/ModalComponent.vue';
 import ndn, { type IdentityKeyInfo } from '@/services/ndn';
 import { Toast } from '@/utils/toast';
+import { formatIdentityFilename } from '@/utils/identity';
 import { describeIdentityKeyImportError, describePeerCertImportError } from '@/utils/identity-errors';
 import { decodeQrDataPayload, decryptSecretPayload } from '@/utils/qr-crypto';
 import QrModal from '@/components/QrModal.vue';
@@ -266,9 +267,21 @@ watch(
   },
 );
 
-function safeName(value: string, fallback = 'identity') {
-  const sanitized = value.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-');
-  return sanitized || fallback;
+function identityFilename(entry: IdentityKeyInfo, prefix: string, ext: string) {
+  return formatIdentityFilename(entry, {
+    prefix,
+    ext,
+    fallbackIdentity: identity.value,
+  });
+}
+
+function peerFilename(certName: string) {
+  const peer = peerKeys.value.find((p) => p.certName === certName);
+  return formatIdentityFilename(peer ?? { keyName: certName }, {
+    prefix: 'peer',
+    ext: 'cert',
+    fallbackIdentity: 'peer',
+  });
 }
 
 function describeDeleteError(err: unknown, fallback = 'Unable to delete entry.'): string {
@@ -351,7 +364,7 @@ async function exportIdentityKey(key: IdentityKeyInfo) {
   action.value = 'export-id';
   try {
     const wire = await ndn.api.export_identity_secret(key.keyName);
-    downloadBytes(wire, `identity-key-${safeName(key.keyName || identity.value)}.ndnkey`);
+    downloadBytes(wire, identityFilename(key, 'identity-key', 'ndnkey'));
     Toast.success('Identity key exported');
   } catch (err) {
     console.error(err);
@@ -367,7 +380,7 @@ async function exportIdentityCert(key: IdentityKeyInfo) {
   action.value = 'export-id-cert';
   try {
     const wire = await ndn.api.export_identity_cert_by_name(key.certName);
-    downloadBytes(wire, `identity-${safeName(key.keyName || identity.value)}.cert`);
+    downloadBytes(wire, identityFilename(key, 'identity', 'cert'));
     Toast.success('Identity certificate exported');
   } catch (err) {
     console.error(err);
@@ -418,8 +431,7 @@ async function exportPeer(certName: string) {
   action.value = 'export-peer';
   try {
     const wires = await ndn.api.export_peer_certs([certName]);
-    const peer = peerKeys.value.find((p) => p.certName === certName);
-    downloadBytes(wires[0], `peer-${safeName(peer?.keyName ?? 'peer')}.cert`);
+    downloadBytes(wires[0], peerFilename(certName));
     Toast.success('Exported peer certificate');
   } catch (err) {
     console.error(err);
@@ -438,8 +450,7 @@ async function exportSelectedPeers() {
     const names = Array.from(selectedPeers.value);
     const wires = await ndn.api.export_peer_certs(names);
     names.forEach((name, idx) => {
-      const peer = peerKeys.value.find((p) => p.certName === name);
-      downloadBytes(wires[idx], `peer-${safeName(peer?.keyName ?? 'peer')}.cert`);
+      downloadBytes(wires[idx], peerFilename(name));
     });
     Toast.success('Exported peer keys');
   } catch (err) {
