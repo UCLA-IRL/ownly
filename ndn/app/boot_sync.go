@@ -18,6 +18,11 @@ import (
 	jsutil "github.com/named-data/ndnd/std/utils/js"
 )
 
+type bootOwnerSession struct {
+	group enc.Name
+	alo   *ndn_sync.SvsALO
+}
+
 func (a *App) NewBootSyncAlo(client ndn.Client, nodeName, group enc.Name, initialState enc.Wire) (*ndn_sync.SvsALO, []enc.Name, error) {
 	alo, err := ndn_sync.NewSvsALO(ndn_sync.SvsAloOpts{
 		Name:         nodeName,
@@ -67,6 +72,76 @@ func (a *App) StopBootSyncAlo(client ndn.Client, alo *ndn_sync.SvsALO, routes []
 	}
 }
 
+func (a *App) publishPendingBootPeers(session *bootOwnerSession) {
+	if session == nil || session.alo == nil {
+		return
+	}
+
+	peerIndex := a.loadPeerIndex()
+	peers, err := a.peerIdentityEntries()
+	if err != nil {
+		log.Warn(a, "Failed to list peer entries for boot publish", "err", err)
+		return
+	}
+
+	for _, entry := range peers {
+		certName, err := enc.NameFromStr(entry.CertName)
+		if err != nil {
+			continue
+		}
+		nameStr := certName.String()
+		if published, ok := peerIndex[nameStr]; ok && published {
+			continue
+		}
+
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil && len(certName) > 0 {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			continue
+		}
+
+		if _, state, err := session.alo.Publish(enc.Wire{wire}); err != nil {
+			log.Error(a, "Failed to publish identity cert to boot group", "err", err, "name", certName)
+			continue
+		} else {
+			a.PersistBootState(session.group, state)
+		}
+
+		peerIndex[nameStr] = true
+		log.Info(a, "Published identity/peer cert to boot sync", "name", certName, "group", session.group)
+	}
+
+	if err := a.persistPeerIndex(peerIndex); err != nil {
+		log.Warn(a, "Failed to persist peer index", "err", err, "group", session.group)
+	}
+}
+
+func (a *App) handleBootIdentityCert(data ndn.Data, dataWire enc.Wire, accept bool) {
+	if data == nil || len(data.Name()) < 2 {
+		return
+	}
+
+	if accept {
+		entries, err := a.importPeerCerts([][]byte{dataWire.Join()})
+		if err != nil {
+			log.Warn(a, "Failed to import boot peer cert", "err", err, "name", data.Name())
+			return
+		}
+		if len(entries) > 0 {
+			index := a.loadPeerIndex()
+			for _, entry := range entries {
+				index[entry.CertName] = true
+			}
+			if err := a.persistPeerIndex(index); err != nil {
+				log.Warn(a, "Failed to persist peer index after boot import", "err", err)
+			}
+		}
+		log.Info(a, "Accepted boot peer identity cert", "name", data.Name())
+	}
+}
+
 // StartBootSyncParticipant publishes a precert to the shared boot sync group and waits for
 // an owner-signed cert to arrive. Once received, it stores the cert and stops syncing.
 func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc.Name, preCert enc.Wire) *ndn_sync.SvsALO {
@@ -80,7 +155,7 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 		return nil
 	}
 	a.bootSyncs[key] = true
-	initialState := a.GetOwnerInitialState(group)
+	initialState := a.LoadBootState(group)
 
 	// Get precert fullname
 	preData, _, err := spec.Spec{}.ReadData(enc.NewWireView(preCert))
@@ -103,31 +178,33 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 
 		// If not a cert, ignore (could be repo BlobFetch commands)
 		ct, _ := data.ContentType().Get()
-		if ct == ndn.ContentTypeKey {
-			a.PersistBootState(group, pub.State)
-
-			// Ignore expired certs
-			if security.CertIsExpired(data) {
-				log.Info(a, "Ignoring expired cert from boot sync", "name", data.Name())
-				return
-			}
-
-			// We push every cert we receive into the keychain, including those belong to others.
-			log.Info(a, "Received final cert", "name", data.Name())
-			if err := a.keychain.InsertCert(pub.Content.Join()); err != nil {
-				log.Error(a, "Failed to insert cert", "err", err)
-				return
-			}
-			if err := client.Store().Put(data.Name(), pub.Content.Join()); err != nil {
-				log.Warn(a, "Failed to store final cert in local store", "err", err, "name", data.Name())
-			}
-			log.Info(a, "Inserted and stored final cert", "name", data.Name())
-
-			// // quit boot group
-			// a.StopBootSyncAlo(client, alo, routes)
-		} else {
-			// should be repo command, skip
+		if ct != ndn.ContentTypeKey {
+			return
 		}
+		a.PersistBootState(group, pub.State)
+
+		// Ignore expired certs
+		if security.CertIsExpired(data) {
+			log.Info(a, "Ignoring expired cert from boot sync", "name", data.Name())
+			return
+		}
+
+		// Identity cert
+		if len(data.Name()) > 1 && data.Name().At(-2).Equal(identityIssuer) {
+			a.handleBootIdentityCert(data, pub.Content, a.bootPeerOptIn())
+			return
+		}
+
+		// We push every final cert we receive into the keychain, including those belong to others.
+		log.Info(a, "Received final cert", "name", data.Name())
+		if err := a.keychain.InsertCert(pub.Content.Join()); err != nil {
+			log.Error(a, "Failed to insert cert", "err", err)
+			return
+		}
+		if err := client.Store().Put(data.Name(), pub.Content.Join()); err != nil {
+			log.Warn(a, "Failed to store final cert in local store", "err", err, "name", data.Name())
+		}
+		log.Info(a, "Inserted and stored final cert", "name", data.Name())
 	})
 
 	if err := a.StartBootSyncAlo(client, alo, routes); err != nil {
@@ -158,7 +235,7 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 	a.bootSyncs[key] = true
 
 	ownerName, _ := enc.NameFromStr("32=owner")
-	initialState := a.GetOwnerInitialState(group)
+	initialState := a.LoadBootState(group)
 	oneWeekAgo := time.Now().Add(-7 * 24 * time.Hour)
 	ownerPrefix := wkspName.Append(enc.NewKeywordComponent("owner"))
 
@@ -166,6 +243,10 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 	if err != nil {
 		log.Error(a, "Failed to create boot sync ALO", "err", err, "group", group)
 		return nil
+	}
+	a.bootOwnerSession = &bootOwnerSession{
+		group: group,
+		alo:   alo,
 	}
 
 	// Owner should subscribe to everything and get three types of data
@@ -177,6 +258,12 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 		contentData, _, err := spec.Spec{}.ReadData(enc.NewWireView(content))
 		if err == nil {
 			if ct, ok := contentData.ContentType().Get(); ok && ct == ndn.ContentTypeKey {
+				if len(contentData.Name()) > 1 && contentData.Name().At(-2).Equal(identityIssuer) {
+					a.PersistBootState(group, pub.State)
+					a.handleBootIdentityCert(contentData, pub.Content, true)
+					return
+				}
+
 				name := contentData.Name()
 				if kl := contentData.Signature().KeyName(); kl != nil && ownerPrefix.IsPrefix(kl) {
 					// Keep track of user certs issued by peer owners
@@ -287,6 +374,7 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 		log.Error(a, "Failed to start boot sync ALO", "err", err, "group", group)
 		return nil
 	}
+	a.publishPendingBootPeers(a.bootOwnerSession)
 	return alo
 }
 
@@ -303,11 +391,11 @@ func (a *App) SignFinalCert(appCert enc.Wire, rootSigner ndn.Signer) (enc.Wire, 
 		Signer:    rootCtxSigner,
 		IssuerId:  enc.NewGenericComponent("anchor"),
 		NotBefore: time.Now().Add(-time.Hour),
-		NotAfter:  time.Now().AddDate(10, 0, 0), // for now
+		NotAfter:  time.Now().AddDate(0, 0, 180), // for now
 	})
 }
 
-func (a *App) GetOwnerInitialState(group enc.Name) enc.Wire {
+func (a *App) LoadBootState(group enc.Name) enc.Wire {
 	if a.bootStateLoad.IsUndefined() || a.bootStateLoad.IsNull() {
 		return nil
 	}

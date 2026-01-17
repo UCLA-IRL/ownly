@@ -23,8 +23,8 @@ import (
 
 var identityIssuer = enc.NewGenericComponent("identity")
 
-// Namespaced location to persist which peer certs the user explicitly trusted.
-var peerIndexName, _ = enc.NameFromStr("/local/peer-identities")
+const peerIndexKey = "/local/peer-identities" // value: map[certName]published
+const peerOptInKey = "peer-opt-in"
 
 type identityEntry struct {
 	Identity   string
@@ -32,6 +32,7 @@ type identityEntry struct {
 	CertName   string
 	HasPrivate bool
 	Source     string // "local" or "peer"
+	Published  bool   // whether the peer cert was published to boot sync
 }
 
 func (e identityEntry) toJs() map[string]any {
@@ -41,6 +42,7 @@ func (e identityEntry) toJs() map[string]any {
 		"certName":   e.CertName,
 		"hasPrivate": e.HasPrivate,
 		"source":     e.Source,
+		"published":  e.Published,
 	}
 }
 
@@ -125,13 +127,15 @@ func (a *App) generateIdentityKey() (identityEntry, error) {
 		return identityEntry{}, err
 	}
 
-	return identityEntry{
+	entry := identityEntry{
 		Identity:   idName.String(),
 		KeyName:    signer.KeyName().String(),
 		CertName:   certData.Name().String(),
 		HasPrivate: true,
 		Source:     "local",
-	}, nil
+	}
+	a.publishPendingBootPeers(a.bootOwnerSession)
+	return entry, nil
 }
 
 func (a *App) importIdentityKey(secret []byte) (identityEntry, error) {
@@ -140,7 +144,7 @@ func (a *App) importIdentityKey(secret []byte) (identityEntry, error) {
 		return identityEntry{}, err
 	}
 	if len(signers) == 0 {
-		return identityEntry{}, fmt.Errorf("no signing key found")
+		return identityEntry{}, fmt.Errorf("No signing key found")
 	}
 
 	idName, err := a.identityName()
@@ -158,17 +162,17 @@ func (a *App) importIdentityKey(secret []byte) (identityEntry, error) {
 			continue
 		}
 		if !signerId.Equal(idName) {
-			return identityEntry{}, fmt.Errorf("identity key must use %s", idName)
+			return identityEntry{}, fmt.Errorf("Identity key must use %s", idName)
 		}
 		if ok, err := a.localIdentityHasKeyName(signer.KeyName()); err != nil {
 			return identityEntry{}, err
 		} else if ok {
-			return identityEntry{}, fmt.Errorf("identity key already exists: %s", signer.KeyName())
+			return identityEntry{}, fmt.Errorf("Identity key already exists: %s", signer.KeyName())
 		}
 		if ok, err := a.peerCertHasKeyName(signer.KeyName()); err != nil {
 			return identityEntry{}, err
 		} else if ok {
-			return identityEntry{}, fmt.Errorf("key name already exists as peer cert: %s", signer.KeyName())
+			return identityEntry{}, fmt.Errorf("Key name already exists as peer cert: %s", signer.KeyName())
 		}
 
 		if err = a.keychain.InsertKey(signer); err != nil {
@@ -182,16 +186,18 @@ func (a *App) importIdentityKey(secret []byte) (identityEntry, error) {
 			return identityEntry{}, err
 		}
 
-		return identityEntry{
+		entry := identityEntry{
 			Identity:   idName.String(),
 			KeyName:    signer.KeyName().String(),
 			CertName:   certData.Name().String(),
 			HasPrivate: true,
 			Source:     "local",
-		}, nil
+		}
+		a.publishPendingBootPeers(a.bootOwnerSession)
+		return entry, nil
 	}
 
-	return identityEntry{}, fmt.Errorf("no usable identity key found")
+	return identityEntry{}, fmt.Errorf("No usable identity key found")
 }
 
 func (a *App) localIdentityEntries() ([]identityEntry, error) {
@@ -205,6 +211,7 @@ func (a *App) localIdentityEntries() ([]identityEntry, error) {
 		return []identityEntry{}, nil
 	}
 
+	publishIndex := a.loadPeerIndex()
 	entries := make([]identityEntry, 0)
 	for _, key := range id.Keys() {
 		for _, cert := range key.UniqueCerts() {
@@ -226,6 +233,7 @@ func (a *App) localIdentityEntries() ([]identityEntry, error) {
 				CertName:   certData.Name().String(),
 				HasPrivate: true,
 				Source:     "local",
+				Published:  publishIndex[certData.Name().String()],
 			})
 		}
 	}
@@ -266,32 +274,59 @@ func (a *App) identityOverview() (map[string]any, error) {
 func (a *App) loadPeerIndex() map[string]bool {
 	index := make(map[string]bool)
 
-	wire, _ := a.store.Get(peerIndexName, false)
-	if wire == nil {
+	var wire []byte
+	if !a.bootStateLoad.IsUndefined() && !a.bootStateLoad.IsNull() {
+		if result, err := jsutil.Await(a.bootStateLoad.Invoke(js.ValueOf(peerIndexKey))); err == nil && result.Truthy() && !result.IsUndefined() && !result.IsNull() {
+			wire = jsutil.JsArrayToSlice(result)
+		}
+	}
+	if len(wire) == 0 {
 		return index
 	}
 
-	var names []string
-	if err := json.Unmarshal(wire, &names); err != nil {
+	if err := json.Unmarshal(wire, &index); err != nil {
 		log.Warn(a, "Failed to decode peer index", "err", err)
-		return index
-	}
-	for _, n := range names {
-		index[n] = true
 	}
 	return index
 }
 
 func (a *App) persistPeerIndex(index map[string]bool) error {
-	names := make([]string, 0, len(index))
-	for name := range index {
-		names = append(names, name)
-	}
-	wire, err := json.Marshal(names)
+	wire, err := json.Marshal(index)
 	if err != nil {
 		return err
 	}
-	return a.store.Put(peerIndexName, wire)
+	if a.bootStatePersist.IsUndefined() || a.bootStatePersist.IsNull() {
+		return nil
+	}
+	jsVal := jsutil.SliceToJsArray(wire)
+	_, err = jsutil.Await(a.bootStatePersist.Invoke(js.ValueOf(peerIndexKey), jsVal))
+	return err
+}
+
+func (a *App) bootPeerOptIn() bool {
+	var wire []byte
+	if !a.bootStateLoad.IsUndefined() && !a.bootStateLoad.IsNull() {
+		if result, err := jsutil.Await(a.bootStateLoad.Invoke(js.ValueOf(peerOptInKey))); err == nil && result.Truthy() && !result.IsUndefined() && !result.IsNull() {
+			wire = jsutil.JsArrayToSlice(result)
+		}
+	}
+	if len(wire) == 0 {
+		return false
+	}
+	return wire[0] == 1
+}
+
+func (a *App) setBootPeerOptIn(optIn bool) error {
+	val := byte(0)
+	if optIn {
+		val = 1
+	}
+	if a.bootStatePersist.IsUndefined() || a.bootStatePersist.IsNull() {
+		return nil
+	}
+	jsVal := jsutil.SliceToJsArray([]byte{val})
+	_, err := jsutil.Await(a.bootStatePersist.Invoke(js.ValueOf(peerOptInKey), jsVal))
+	return err
 }
 
 func (a *App) peerIdentityEntries() ([]identityEntry, error) {
@@ -335,6 +370,7 @@ func (a *App) peerIdentityEntries() ([]identityEntry, error) {
 			CertName:   certData.Name().String(),
 			HasPrivate: false,
 			Source:     "peer",
+			Published:  index[name],
 		})
 	}
 
@@ -473,82 +509,89 @@ func (a *App) keychainRemoveNamesForKeyName(keyName enc.Name) ([]string, error) 
 }
 
 func (a *App) importPeerCerts(blobs [][]byte) ([]identityEntry, error) {
+	index := a.loadPeerIndex()
+	existingCerts := make(map[string]bool)
+	existingKeys := make(map[string]bool)
 	entries, err := a.peerIdentityEntries()
 	if err != nil {
 		return nil, err
 	}
-	index := a.loadPeerIndex()
-	existingKeys := make(map[string]bool)
-	existingCerts := make(map[string]bool)
 	for _, entry := range entries {
 		existingKeys[entry.KeyName] = true
 		existingCerts[entry.CertName] = true
+		if entry.Published {
+			index[entry.CertName] = true
+		}
 	}
 
-	imported := make([]identityEntry, 0)
-
+	wires := make([][]byte, 0)
 	for _, blob := range blobs {
 		_, certs, err := security.DecodeFile(blob)
 		if err != nil {
 			return nil, err
 		}
-		for _, certWire := range certs {
-			certData, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{certWire}))
-			if err != nil {
-				return nil, err
-			}
-			if ctype, ok := certData.ContentType().Get(); !ok || ctype != ndn.ContentTypeKey {
-				return nil, fmt.Errorf("invalid certificate content type for %s", certData.Name())
-			}
-			if security.CertIsExpired(certData) {
-				return nil, fmt.Errorf("certificate is expired: %s", certData.Name())
-			}
-
-			// Only accept self-signed certificates
-			valid, err := sig.ValidateData(certData, sigCov, certData)
-			if err != nil || !valid {
-				return nil, fmt.Errorf("certificate %s is not self-signed", certData.Name())
-			}
-
-			keyName, err := security.GetKeyNameFromCertName(certData.Name())
-			if err != nil {
-				return nil, err
-			}
-			nameStr := certData.Name().String()
-			keyStr := keyName.String()
-			if existingCerts[nameStr] {
-				return nil, fmt.Errorf("peer certificate already exists")
-			}
-			if existingKeys[keyStr] {
-				return nil, fmt.Errorf("peer key already exists")
-			}
-			if ok, err := a.localIdentityHasKeyName(keyName); err != nil {
-				return nil, err
-			} else if ok {
-				return nil, fmt.Errorf("key name already exists as identity key: %s", keyName)
-			}
-			if err = a.keychain.InsertCert(certWire); err != nil {
-				return nil, err
-			}
-			identity, _ := security.GetIdentityFromKeyName(keyName)
-
-			existingCerts[nameStr] = true
-			existingKeys[keyStr] = true
-			index[nameStr] = true
-			imported = append(imported, identityEntry{
-				Identity:   identity.String(),
-				KeyName:    keyStr,
-				CertName:   nameStr,
-				HasPrivate: false,
-				Source:     "peer",
-			})
-		}
+		wires = append(wires, certs...)
 	}
 
+	imported := make([]identityEntry, 0)
+	for _, certWire := range wires {
+		certData, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{certWire}))
+		if err != nil {
+			return nil, err
+		}
+		if ctype, ok := certData.ContentType().Get(); !ok || ctype != ndn.ContentTypeKey {
+			return nil, fmt.Errorf("Invalid certificate content type for %s", certData.Name())
+		}
+		if security.CertIsExpired(certData) {
+			return nil, fmt.Errorf("Certificate is expired: %s", certData.Name())
+		}
+
+		valid, err := sig.ValidateData(certData, sigCov, certData)
+		if err != nil || !valid {
+			return nil, fmt.Errorf("Certificate %s is not self-signed", certData.Name())
+		}
+
+		keyName, err := security.GetKeyNameFromCertName(certData.Name())
+		if err != nil {
+			return nil, err
+		}
+		nameStr := certData.Name().String()
+		keyStr := keyName.String()
+
+		if ok, err := a.localIdentityHasKeyName(keyName); err != nil {
+			return nil, err
+		} else if ok {
+			// Key name already exists as identity key
+			continue
+		}
+
+		if existingCerts[nameStr] || index[nameStr] || existingKeys[keyStr] {
+			continue
+		}
+
+		if err = a.keychain.InsertCert(certWire); err != nil {
+			continue
+		}
+
+		existingCerts[nameStr] = true
+		existingKeys[keyStr] = true
+		index[nameStr] = false
+
+		identity, _ := security.GetIdentityFromKeyName(keyName)
+		imported = append(imported, identityEntry{
+			Identity:   identity.String(),
+			KeyName:    keyStr,
+			CertName:   nameStr,
+			HasPrivate: false,
+			Source:     "peer",
+			Published:  false,
+		})
+	}
 	if err := a.persistPeerIndex(index); err != nil {
 		return nil, err
 	}
 
+	a.publishPendingBootPeers(a.bootOwnerSession)
 	return imported, nil
 }
 
@@ -592,19 +635,19 @@ func (a *App) exportIdentitySecret(keyName enc.Name) ([]byte, error) {
 		return secret.Join(), nil
 	}
 
-	return nil, fmt.Errorf("identity key not found")
+	return nil, fmt.Errorf("Identity key not found")
 }
 
 func (a *App) exportPeerCerts(names []enc.Name) ([][]byte, error) {
 	index := a.loadPeerIndex()
 	out := make([][]byte, 0, len(names))
 	for _, name := range names {
-		if !index[name.String()] {
-			return nil, fmt.Errorf("peer key %s not found", name)
+		if _, ok := index[name.String()]; !ok {
+			return nil, fmt.Errorf("Peer key %s not found", name)
 		}
 		wire, _ := a.store.Get(name, false)
 		if wire == nil {
-			return nil, fmt.Errorf("peer key %s missing", name)
+			return nil, fmt.Errorf("Peer key %s missing", name)
 		}
 		out = append(out, wire)
 	}
@@ -614,7 +657,7 @@ func (a *App) exportPeerCerts(names []enc.Name) ([][]byte, error) {
 func (a *App) deleteIdentityEntry(certName enc.Name) error {
 	wire, _ := a.store.Get(certName, false)
 	if wire == nil {
-		return fmt.Errorf("certificate not found")
+		return fmt.Errorf("Certificate not found")
 	}
 	certData, _, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{wire}))
 	if err != nil {
@@ -633,7 +676,7 @@ func (a *App) deleteIdentityEntry(certName enc.Name) error {
 	}
 
 	index := a.loadPeerIndex()
-	managedPeer := index[certName.String()]
+	_, managedPeer := index[certName.String()]
 	issuerIsIdentity := certData.Name().At(-2).Equal(identityIssuer)
 	localHasKey := false
 	if issuerIsIdentity {
@@ -685,7 +728,7 @@ func (a *App) deleteIdentityEntry(certName enc.Name) error {
 
 	api := js.Global().Get("_ndnd_keychain_js")
 	if !api.Truthy() {
-		return fmt.Errorf("keychain store unavailable")
+		return fmt.Errorf("Keychain store unavailable")
 	}
 	jsNames := js.Global().Get("Array").New(len(removeNames))
 	for i, n := range removeNames {

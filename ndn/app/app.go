@@ -41,7 +41,10 @@ type App struct {
 	// Tracks boot sync groups we have already joined to avoid duplicates
 	bootSyncs map[string]bool
 
-	// JS callbacks to load/persist owner cert SVS state
+	// Active boot owner session (owners open one workspace at a time)
+	bootOwnerSession *bootOwnerSession
+
+	// JS callbacks to load/persist boot SVS state
 	bootStateLoad    js.Value
 	bootStatePersist js.Value
 }
@@ -198,6 +201,20 @@ func (a *App) JsApi() js.Value {
 		// list_identity_keys(): Promise<{identity: string; local: any[]; peers: any[]}>;
 		"list_identity_keys": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			return a.identityOverview()
+		}),
+
+		// get_boot_peer_opt_in(): Promise<boolean>;
+		"get_boot_peer_opt_in": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			return a.bootPeerOptIn(), nil
+		}),
+
+		// set_boot_peer_opt_in(optIn: boolean): Promise<void>;
+		"set_boot_peer_opt_in": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			optIn := p[0].Bool()
+			if err := a.setBootPeerOptIn(optIn); err != nil {
+				return nil, err
+			}
+			return nil, nil
 		}),
 
 		// generate_identity_key(): Promise<any>;

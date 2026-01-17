@@ -482,14 +482,18 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if signer == nil {
 				return nil, fmt.Errorf("No valid signing key for invitation")
 			}
+			preCertNameRule := wkspName.
+				Append(invitee...).
+				Append(enc.NewGenericComponent("KEY")).
+				Append(enc.NewGenericComponent("_")).
+				Append(enc.NewGenericComponent("pre"))
 
 			wire, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
 				Name:   inviteName,
 				Signer: signer,
 				Content: trust_schema.CrossSchemaContent{
 					SimpleSchemaRules: []*trust_schema.SimpleSchemaRule{{
-						// Authorize invitee's identity key to sign data
-						NamePrefix: wkspName.Append(invitee...),
+						NamePrefix: preCertNameRule,
 						KeyLocator: &spec.KeyLocator{
 							Name: invitee.Append(enc.NewGenericComponent("KEY")),
 						},
