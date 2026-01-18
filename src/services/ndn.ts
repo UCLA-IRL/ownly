@@ -35,10 +35,6 @@ interface NDNAPI {
     local: IdentityKeyInfo[];
     peers: IdentityKeyInfo[];
   }>;
-  /** Check whether owner-authenticated boot peers should be imported automatically */
-  get_boot_peer_opt_in(): Promise<boolean>;
-  /** Toggle importing owner-authenticated boot peers */
-  set_boot_peer_opt_in(optIn: boolean): Promise<void>;
   /** Generate a new managed identity key pair */
   generate_identity_key(): Promise<IdentityKeyInfo>;
   /** Import an existing identity key pair (MarshalSecret format) */

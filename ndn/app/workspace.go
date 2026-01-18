@@ -241,6 +241,8 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	rootSigner := a.trust.Suggest(detectRoot)
 	var bootAlo *ndn_sync.SvsALO
 	var nodeName enc.Name
+	var preCertWire enc.Wire
+	var recentPreCert bool
 
 	isOwner, _ := a.IsWorkspaceOwner(wkspName.String())
 	if isOwner {
@@ -252,7 +254,10 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				return
 			}
 		}
-		bootAlo = a.StartBootSyncOwner(client, wkspName, rootSigner)
+		if err = a.StartBootSyncOwner(client, wkspName, rootSigner); err != nil {
+			err = fmt.Errorf("Failed to start boot sync: %w", err)
+			return
+		}
 	} else {
 		nodeName = idName
 		// Check local invitation first
@@ -267,9 +272,6 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		}
 		// Prepare wksp user key
 		if userSigner == nil {
-			var preCertWire enc.Wire
-			var recentPreCert bool
-
 			detect := wkspName.Append(enc.NewKeywordComponent("PD"))
 			preUserSigner := a.trust.Suggest(detect)
 			if preUserSigner != nil {
@@ -299,8 +301,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 					return
 				}
 			}
-			// User don't need join boot group once bootstrapped
-			bootAlo = a.StartBootSyncParticipant(client, wkspName, idName, preCertWire)
+		}
+		// User always willing to help
+		if err = a.StartBootSyncParticipant(client, wkspName, idName, preCertWire); err != nil {
+			err = fmt.Errorf("Failed to start boot sync: %w", err)
+			return
 		}
 	}
 
@@ -517,7 +522,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				if err != nil {
 					return nil, err
 				}
-				a.PersistBootState(bootAlo.GroupPrefix(), bootAloState)
+				a.PersistBootState(bootAloState)
 			} else {
 				return nil, fmt.Errorf("Failed to publish in boot alo")
 			}

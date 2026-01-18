@@ -24,7 +24,6 @@ import (
 var identityIssuer = enc.NewGenericComponent("identity")
 
 const peerIndexKey = "/local/peer-identities" // value: map[certName]published
-const peerOptInKey = "peer-opt-in"
 
 type identityEntry struct {
 	Identity   string
@@ -134,7 +133,7 @@ func (a *App) generateIdentityKey() (identityEntry, error) {
 		HasPrivate: true,
 		Source:     "local",
 	}
-	a.publishPendingBootPeers(a.bootOwnerSession)
+	a.publishPendingBootPeers()
 	return entry, nil
 }
 
@@ -193,7 +192,7 @@ func (a *App) importIdentityKey(secret []byte) (identityEntry, error) {
 			HasPrivate: true,
 			Source:     "local",
 		}
-		a.publishPendingBootPeers(a.bootOwnerSession)
+		a.publishPendingBootPeers()
 		return entry, nil
 	}
 
@@ -300,32 +299,6 @@ func (a *App) persistPeerIndex(index map[string]bool) error {
 	}
 	jsVal := jsutil.SliceToJsArray(wire)
 	_, err = jsutil.Await(a.bootStatePersist.Invoke(js.ValueOf(peerIndexKey), jsVal))
-	return err
-}
-
-func (a *App) bootPeerOptIn() bool {
-	var wire []byte
-	if !a.bootStateLoad.IsUndefined() && !a.bootStateLoad.IsNull() {
-		if result, err := jsutil.Await(a.bootStateLoad.Invoke(js.ValueOf(peerOptInKey))); err == nil && result.Truthy() && !result.IsUndefined() && !result.IsNull() {
-			wire = jsutil.JsArrayToSlice(result)
-		}
-	}
-	if len(wire) == 0 {
-		return false
-	}
-	return wire[0] == 1
-}
-
-func (a *App) setBootPeerOptIn(optIn bool) error {
-	val := byte(0)
-	if optIn {
-		val = 1
-	}
-	if a.bootStatePersist.IsUndefined() || a.bootStatePersist.IsNull() {
-		return nil
-	}
-	jsVal := jsutil.SliceToJsArray([]byte{val})
-	_, err := jsutil.Await(a.bootStatePersist.Invoke(js.ValueOf(peerOptInKey), jsVal))
 	return err
 }
 
@@ -591,7 +564,7 @@ func (a *App) importPeerCerts(blobs [][]byte) ([]identityEntry, error) {
 		return nil, err
 	}
 
-	a.publishPendingBootPeers(a.bootOwnerSession)
+	a.publishPendingBootPeers()
 	return imported, nil
 }
 

@@ -124,22 +124,6 @@
           </div>
         </header>
 
-        <div class="optin-row">
-          <label class="checkbox">
-            <input
-              type="checkbox"
-              :checked="acceptOwnerPeers"
-              :disabled="optInBusy"
-              @change="toggleOwnerPeerOptIn"
-            />
-            Accept owner-published peer identities from boot sync
-          </label>
-          <p class="is-size-7 has-text-grey mt-1">
-            When enabled, identity keys shared by workspace owners in the boot sync group show up here automatically.
-          </p>
-        </div>
-        <p v-if="optInError" class="help is-danger mt-1">{{ optInError }}</p>
-
         <table class="table is-fullwidth is-hoverable wide-table">
           <thead>
             <tr>
@@ -246,13 +230,10 @@ const identity = ref(String());
 const localKeys = ref<IdentityKeyInfo[]>([]);
 const peerKeys = ref<IdentityKeyInfo[]>([]);
 const selectedPeers = ref<Set<string>>(new Set());
-const acceptOwnerPeers = ref(false);
 const busy = ref(false);
 const action = ref<string | null>(null);
 const identityError = ref(String());
 const peerError = ref(String());
-const optInError = ref(String());
-const optInBusy = ref(false);
 const showScanner = ref(false);
 const scanMode = ref<'peer' | 'secret' | null>(null);
 const showSecretPasswordModal = ref(false);
@@ -282,8 +263,6 @@ watch(
       selectedPeers.value = new Set();
       identityError.value = '';
       peerError.value = '';
-      optInError.value = '';
-      optInBusy.value = false;
     }
   },
 );
@@ -321,21 +300,12 @@ async function refresh(options: { showSpinner?: boolean } = {}) {
   if (showSpinner) loading.value = true;
   identityError.value = '';
   peerError.value = '';
-  optInError.value = '';
   try {
-    const [overview, optIn] = await Promise.all([
-      ndn.api.list_identity_keys(),
-      ndn.api.get_boot_peer_opt_in().catch((err) => {
-        console.error(err);
-        optInError.value = 'Unable to load preference.';
-        return acceptOwnerPeers.value;
-      }),
-    ]);
+    const overview = await ndn.api.list_identity_keys();
     identity.value = overview.identity;
     localKeys.value = overview.local ?? [];
     peerKeys.value = overview.peers ?? [];
     selectedPeers.value = new Set();
-    acceptOwnerPeers.value = !!optIn;
   } catch (err) {
     console.error(err);
     identityError.value = 'Unable to load identity keys.';
@@ -574,26 +544,6 @@ function toggleAllPeers() {
     selectedPeers.value = new Set();
   } else {
     selectedPeers.value = new Set(peerKeys.value.map((p) => p.certName));
-  }
-}
-
-async function toggleOwnerPeerOptIn(event: Event) {
-  const target = event.target as HTMLInputElement | null;
-  const next = target?.checked ?? !acceptOwnerPeers.value;
-  optInError.value = '';
-  optInBusy.value = true;
-  try {
-    await ndn.api.set_boot_peer_opt_in(next);
-    acceptOwnerPeers.value = next;
-    if (next) {
-      await refresh({ showSpinner: false });
-    }
-  } catch (err) {
-    console.error(err);
-    optInError.value = 'Unable to update preference.';
-    if (target) target.checked = acceptOwnerPeers.value;
-  } finally {
-    optInBusy.value = false;
   }
 }
 
