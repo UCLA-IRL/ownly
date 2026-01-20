@@ -52,8 +52,8 @@ export class Workspace {
       api = await ndn.api.get_workspace(metadata.name, metadata.ignore);
       await api.start();
 
-      // Wait until user key is ready before proceeding.
-      const certToast = Toast.loading('Waiting for certificate issuance...');
+      // Wait until user key is ready before proceeding; toast follows route changes.
+      const certToast = Toast.loading('Waiting for certificate issuance. You may quit while waiting for workspace creators to respond...');
       try {
         await ndn.api.wait_user_key(metadata.name);
         await certToast.success('Certificate Ready');

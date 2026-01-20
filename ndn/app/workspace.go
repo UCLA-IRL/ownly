@@ -239,24 +239,22 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	detectRoot := wkspName.Append(enc.NewKeywordComponent("RD"))
 	userSigner := a.trust.Suggest(detectUser)
 	rootSigner := a.trust.Suggest(detectRoot)
-	var bootAlo *ndn_sync.SvsALO
 	var nodeName enc.Name
 	var preCertWire enc.Wire
-	var recentPreCert bool
+	var bootSyncFunc func() error
 
 	isOwner, _ := a.IsWorkspaceOwner(wkspName.String())
 	if isOwner {
 		nodeName, _ = enc.NameFromStr("32=owner")
 		if rootSigner == nil || userSigner == nil {
-			rootSigner, userSigner, err = a.SetupOwner(wkspName, identitySigner)
+			rootSigner, userSigner, err = a.setupOwner(wkspName, identitySigner)
 			if err != nil {
 				err = fmt.Errorf("Failed to setup workspace anchor and owner: %w", err)
 				return
 			}
 		}
-		if err = a.StartBootSyncOwner(client, wkspName, rootSigner); err != nil {
-			err = fmt.Errorf("Failed to start boot sync: %w", err)
-			return
+		bootSyncFunc = func() error {
+			return a.StartBootSyncOwner(client, wkspName, rootSigner)
 		}
 	} else {
 		nodeName = idName
@@ -275,27 +273,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			detect := wkspName.Append(enc.NewKeywordComponent("PD"))
 			preUserSigner := a.trust.Suggest(detect)
 			if preUserSigner != nil {
-				preCertBytes, _ := a.store.Get(preUserSigner.KeyName(), true)
-				if preCertBytes != nil {
-					candidate := enc.Wire{preCertBytes}
-					preCertData, _, perr := spec.Spec{}.ReadData(enc.NewWireView(candidate))
-					if perr == nil {
-						notBefore, _ := preCertData.Signature().Validity()
-						if nb, ok := notBefore.Get(); ok && time.Since(nb) <= 48*time.Hour {
-							log.Info(a, "Reusing existing precert", "name", preCertData.Name())
-							recentPreCert = true
-							preCertWire = candidate
-						} else {
-							recentPreCert = false
-						}
-					} else {
-						recentPreCert = false
-					}
-				}
-			}
+				preCertBytes, _ := a.store.Get(preUserSigner.KeyLocator(), true)
+				preCertWire = enc.Wire{preCertBytes}
 
-			if !recentPreCert && preCertWire == nil {
-				preCertWire, userSigner, err = a.SignPreCert(wkspName, identitySigner, enc.Wire{invitation})
+			} else {
+				preCertWire, userSigner, err = a.signPreCert(wkspName, identitySigner, enc.Wire{invitation})
 				if err != nil {
 					err = fmt.Errorf("Failed to sign precert")
 					return
@@ -303,9 +285,8 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}
 		}
 		// User always willing to help
-		if err = a.StartBootSyncParticipant(client, wkspName, idName, preCertWire); err != nil {
-			err = fmt.Errorf("Failed to start boot sync: %w", err)
-			return
+		bootSyncFunc = func() error {
+			return a.StartBootSyncParticipant(client, wkspName, idName, preCertWire)
 		}
 	}
 
@@ -317,6 +298,12 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		Root:      rootSigner,
 		User:      userSigner,
 	})
+	// Reorder function calls to ensure key prefixes get registered first
+	time.Sleep(100 * time.Millisecond)
+	if err = bootSyncFunc(); err != nil {
+		err = fmt.Errorf("Failed to start boot sync: %w", err)
+		return
+	}
 
 	// Reset encryption keys
 	a.psk = nil
@@ -371,11 +358,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if err := client.Stop(); err != nil {
 				return nil, err
 			}
-			if bootAlo != nil {
-				bootAlo.Stop()
+			if a.bootSyncSession != nil && a.bootSyncSession.alo != nil {
+				_ = a.bootSyncSession.alo.Stop()
 				routes := []enc.Name{
-					bootAlo.SyncPrefix(),
-					bootAlo.DataPrefix(),
+					a.bootSyncSession.alo.SyncPrefix(),
+					a.bootSyncSession.alo.DataPrefix(),
 				}
 				for _, route := range routes {
 					client.WithdrawPrefix(route, nil)
@@ -512,19 +499,19 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				return nil, err
 			}
 			// Publish invitation to boot group with encapsulated Data so repo can store it immediately
-			if bootAlo != nil {
+			if a.bootSyncSession != nil && a.bootSyncSession.alo != nil {
 				cmd := spec_repo.RepoCmd{
 					BlobFetch: &spec_repo.BlobFetch{
 						Data: [][]byte{wire.Join()},
 					},
 				}
-				_, bootAloState, err := bootAlo.Publish(cmd.Encode())
+				_, bootState, err := a.bootSyncSession.alo.Publish(cmd.Encode())
 				if err != nil {
 					return nil, err
 				}
-				a.PersistBootState(bootAloState)
+				a.PersistBootState(bootState)
 			} else {
-				return nil, fmt.Errorf("Failed to publish in boot alo")
+				return nil, fmt.Errorf("Boot Sync hasn't started yet")
 			}
 			return jsutil.SliceToJsArray(wire.Join()), nil
 		}),
@@ -579,7 +566,7 @@ func (a *App) announceKeyPrefix(args announceKeyPrefixArgs) {
 	}
 }
 
-func (a *App) SignPreCert(wkspName enc.Name, identitySigner ndn.Signer, invitation enc.Wire) (enc.Wire, ndn.Signer, error) {
+func (a *App) signPreCert(wkspName enc.Name, identitySigner ndn.Signer, invitation enc.Wire) (enc.Wire, ndn.Signer, error) {
 	// Generate key and certificate for this workspace
 	idName, err := security.GetIdentityFromKeyName(identitySigner.KeyName())
 	if err != nil {
@@ -625,7 +612,7 @@ func (a *App) SignPreCert(wkspName enc.Name, identitySigner ndn.Signer, invitati
 	return preCertWire, userSigner, nil
 }
 
-func (a *App) SetupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Signer, ndn.Signer, error) {
+func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Signer, ndn.Signer, error) {
 	if identitySigner == nil {
 		return nil, nil, fmt.Errorf("No identity signer")
 	}

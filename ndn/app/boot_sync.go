@@ -44,7 +44,7 @@ func (a *App) NewBootSyncAlo(client ndn.Client, nodeName, group enc.Name, initia
 	return alo, routes, nil
 }
 
-func (a *App) StartBootSyncAlo(client ndn.Client, alo *ndn_sync.SvsALO, routes []enc.Name) error {
+func (a *App) startBootSyncAlo(client ndn.Client, alo *ndn_sync.SvsALO, routes []enc.Name) error {
 	for _, route := range routes {
 		client.AnnouncePrefix(ndn.Announcement{
 			Name:   route,
@@ -56,25 +56,18 @@ func (a *App) StartBootSyncAlo(client ndn.Client, alo *ndn_sync.SvsALO, routes [
 		a.NotifyRepoJoin(client, alo.GroupPrefix(), alo.DataPrefix(), false)
 	})
 
-	// Wait for 1 second to mask the prefix registration race
-	time.Sleep(time.Second)
 	return alo.Start()
-}
-
-// Question: should one quit boot sync group? owners should definitely stay but not sure about users
-func (a *App) StopBootSyncAlo(client ndn.Client, alo *ndn_sync.SvsALO, routes []enc.Name) {
-	if alo != nil {
-		if err := alo.Stop(); err != nil {
-			log.Warn(a, "Failed to stop boot ALO", "err", err, "group", alo.GroupPrefix())
-		}
-	}
-	for _, route := range routes {
-		client.WithdrawPrefix(route, nil)
-	}
 }
 
 func (a *App) publishPendingBootPeers() {
 	if a.bootSyncSession == nil || a.bootSyncSession.alo == nil {
+		return
+	}
+
+	// Only owners should publish peer identities to the boot group.
+	wkspName := a.bootSyncSession.group.Prefix(-1)
+	isOwner, err := a.IsWorkspaceOwner(wkspName.String())
+	if err != nil || !isOwner {
 		return
 	}
 
@@ -84,6 +77,7 @@ func (a *App) publishPendingBootPeers() {
 		log.Warn(a, "Failed to list peer entries for boot publish", "err", err)
 		return
 	}
+	groupStr := a.bootSyncSession.group.String()
 
 	for _, entry := range peers {
 		certName, err := enc.NameFromStr(entry.CertName)
@@ -91,7 +85,7 @@ func (a *App) publishPendingBootPeers() {
 			continue
 		}
 		nameStr := certName.String()
-		if published, ok := peerIndex[nameStr]; ok && published {
+		if peerIndex.publishedInGroup(nameStr, groupStr) {
 			continue
 		}
 
@@ -110,7 +104,7 @@ func (a *App) publishPendingBootPeers() {
 			a.PersistBootState(state)
 		}
 
-		peerIndex[nameStr] = true
+		peerIndex.ensureGroup(nameStr, groupStr, true)
 		log.Info(a, "Published identity/peer cert to boot sync", "name", certName, "group", a.bootSyncSession.group)
 	}
 
@@ -124,19 +118,13 @@ func (a *App) handleBootIdentityCert(data ndn.Data, dataWire enc.Wire) {
 		return
 	}
 
-	entries, err := a.importPeerCerts([][]byte{dataWire.Join()})
+	_, err := a.importPeerCerts([][]byte{dataWire.Join()}, peerCertImportOpts{
+		Published: true,
+		Group:     a.bootSyncSession.group,
+	})
 	if err != nil {
 		log.Warn(a, "Failed to import boot peer cert", "err", err, "name", data.Name())
 		return
-	}
-	if len(entries) > 0 {
-		index := a.loadPeerIndex()
-		for _, entry := range entries {
-			index[entry.CertName] = true
-		}
-		if err := a.persistPeerIndex(index); err != nil {
-			log.Warn(a, "Failed to persist peer index after boot import", "err", err)
-		}
 	}
 	log.Info(a, "Accepted boot peer identity cert", "name", data.Name())
 }
@@ -203,7 +191,7 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 		log.Error(a, "Failed to create boot cert publisher ALO", "err", err, "group", group)
 		return err
 	}
-	if err := a.StartBootSyncAlo(client, alo, routes); err != nil {
+	if err := a.startBootSyncAlo(client, alo, routes); err != nil {
 		log.Error(a, "Failed to start boot sync ALO", "err", err)
 		return err
 	}
@@ -211,26 +199,30 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 		group: group,
 		alo:   alo,
 	}
+
+	if err := a.ensurePeerGroup(wkspName); err != nil {
+		log.Warn(a, "Failed to update peer publish index for group", "group", wkspName, "err", err)
+	}
 	// Subscribe to updates
 	err = a.participantSub(client)
 	if err != nil {
 		return err
 	}
-	// Get precert fullname
-	if preCert != nil && len(preCert.Join()) != 0 {
-		var preCertName enc.Name
-		preData, _, err := spec.Spec{}.ReadData(enc.NewWireView(preCert))
-		if err == nil {
-			preCertName = preData.Name().ToFullName(preCert)
-		}
-		if _, state, err := alo.Publish(enc.Wire{preCertName.Bytes()}); err != nil {
-			log.Error(a, "Failed to publish precert", "err", err)
-			return err
-		} else {
-			a.PersistBootState(state)
-			log.Info(a, "Published precert for signing", "name", preCertName)
-		}
-		return nil
+	// Publish or detect pending precert
+	var preCertName enc.Name
+	preData, _, err := spec.Spec{}.ReadData(enc.NewWireView(preCert))
+	if err != nil {
+		return err
+	}
+	preCertName = preData.Name().ToFullName(preCert)
+
+	// Notify anyway
+	if _, state, err := alo.Publish(enc.Wire{preCertName.Bytes()}); err != nil {
+		log.Error(a, "Failed to publish precert", "err", err)
+		return err
+	} else {
+		a.PersistBootState(state)
+		log.Info(a, "Published precert for signing", "name", preCertName)
 	}
 	return nil
 }
@@ -390,11 +382,14 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 		group: group,
 		alo:   alo,
 	}
+	if err := a.ensurePeerGroup(wkspName); err != nil {
+		log.Warn(a, "Failed to update peer publish index for group", "group", wkspName, "err", err)
+	}
 	// Subscribe to all updates
 	if err := a.ownerSub(client, wkspName, rootSigner); err != nil {
 		return err
 	}
-	if err := a.StartBootSyncAlo(client, alo, routes); err != nil {
+	if err := a.startBootSyncAlo(client, alo, routes); err != nil {
 		log.Error(a, "Failed to start boot sync ALO", "err", err, "group", group)
 		return err
 	}

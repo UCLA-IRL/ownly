@@ -4,8 +4,6 @@ package app
 
 import (
 	"crypto/elliptic"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"syscall/js"
@@ -16,14 +14,15 @@ import (
 	"github.com/named-data/ndnd/std/ndn"
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 	"github.com/named-data/ndnd/std/security"
-	"github.com/named-data/ndnd/std/security/keychain"
 	sig "github.com/named-data/ndnd/std/security/signer"
 	jsutil "github.com/named-data/ndnd/std/utils/js"
 )
 
 var identityIssuer = enc.NewGenericComponent("identity")
 
-const peerIndexKey = "/local/peer-identities" // value: map[certName]published
+const peerIndexKey = "/local/peer-identities" // value: peerPublishIndex
+
+type peerPublishIndex map[string]map[string]bool // cert -> group -> published
 
 type identityEntry struct {
 	Identity   string
@@ -31,7 +30,6 @@ type identityEntry struct {
 	CertName   string
 	HasPrivate bool
 	Source     string // "local" or "peer"
-	Published  bool   // whether the peer cert was published to boot sync
 }
 
 func (e identityEntry) toJs() map[string]any {
@@ -41,7 +39,6 @@ func (e identityEntry) toJs() map[string]any {
 		"certName":   e.CertName,
 		"hasPrivate": e.HasPrivate,
 		"source":     e.Source,
-		"published":  e.Published,
 	}
 }
 
@@ -210,7 +207,6 @@ func (a *App) localIdentityEntries() ([]identityEntry, error) {
 		return []identityEntry{}, nil
 	}
 
-	publishIndex := a.loadPeerIndex()
 	entries := make([]identityEntry, 0)
 	for _, key := range id.Keys() {
 		for _, cert := range key.UniqueCerts() {
@@ -232,7 +228,6 @@ func (a *App) localIdentityEntries() ([]identityEntry, error) {
 				CertName:   certData.Name().String(),
 				HasPrivate: true,
 				Source:     "local",
-				Published:  publishIndex[certData.Name().String()],
 			})
 		}
 	}
@@ -270,8 +265,8 @@ func (a *App) identityOverview() (map[string]any, error) {
 	}, nil
 }
 
-func (a *App) loadPeerIndex() map[string]bool {
-	index := make(map[string]bool)
+func (a *App) loadPeerIndex() peerPublishIndex {
+	index := make(peerPublishIndex)
 
 	var wire []byte
 	if !a.bootStateLoad.IsUndefined() && !a.bootStateLoad.IsNull() {
@@ -289,7 +284,7 @@ func (a *App) loadPeerIndex() map[string]bool {
 	return index
 }
 
-func (a *App) persistPeerIndex(index map[string]bool) error {
+func (a *App) persistPeerIndex(index peerPublishIndex) error {
 	wire, err := json.Marshal(index)
 	if err != nil {
 		return err
@@ -343,7 +338,6 @@ func (a *App) peerIdentityEntries() ([]identityEntry, error) {
 			CertName:   certData.Name().String(),
 			HasPrivate: false,
 			Source:     "peer",
-			Published:  index[name],
 		})
 	}
 
@@ -435,54 +429,17 @@ func (a *App) peerCertHasKeyName(keyName enc.Name) (bool, error) {
 	return false, nil
 }
 
-func (a *App) keychainRemoveNamesForKeyName(keyName enc.Name) ([]string, error) {
-	api := js.Global().Get("_ndnd_keychain_js")
-	if !api.Truthy() {
-		return nil, fmt.Errorf("keychain store unavailable")
-	}
-
-	list, err := jsutil.Await(api.Call("list"))
-	if err != nil {
-		return nil, err
-	}
-
-	names := make(map[string]bool)
-	for i := 0; i < list.Length(); i++ {
-		blob := jsutil.JsArrayToSlice(list.Index(i))
-		signers, certs, err := security.DecodeFile(blob)
-		if err != nil {
-			continue
-		}
-
-		for _, signer := range signers {
-			if signer != nil && signer.KeyName().Equal(keyName) {
-				names[hashName(blob, keychain.EXT_KEY)] = true
-			}
-		}
-		for _, certWire := range certs {
-			certData, _, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{certWire}))
-			if err != nil {
-				continue
-			}
-			certKeyName, err := security.GetKeyNameFromCertName(certData.Name())
-			if err != nil {
-				continue
-			}
-			if certKeyName.Equal(keyName) {
-				names[hashName(blob, keychain.EXT_CERT)] = true
-			}
-		}
-	}
-
-	out := make([]string, 0, len(names))
-	for name := range names {
-		out = append(out, name)
-	}
-	return out, nil
+type peerCertImportOpts struct {
+	Published bool
+	Group     enc.Name
 }
 
-func (a *App) importPeerCerts(blobs [][]byte) ([]identityEntry, error) {
+func (a *App) importPeerCerts(blobs [][]byte, opts peerCertImportOpts) ([]identityEntry, error) {
 	index := a.loadPeerIndex()
+	groupStr := ""
+	if len(opts.Group) > 0 {
+		groupStr = opts.Group.String()
+	}
 	existingCerts := make(map[string]bool)
 	existingKeys := make(map[string]bool)
 	entries, err := a.peerIdentityEntries()
@@ -492,9 +449,6 @@ func (a *App) importPeerCerts(blobs [][]byte) ([]identityEntry, error) {
 	for _, entry := range entries {
 		existingKeys[entry.KeyName] = true
 		existingCerts[entry.CertName] = true
-		if entry.Published {
-			index[entry.CertName] = true
-		}
 	}
 
 	wires := make([][]byte, 0)
@@ -538,7 +492,9 @@ func (a *App) importPeerCerts(blobs [][]byte) ([]identityEntry, error) {
 			continue
 		}
 
-		if existingCerts[nameStr] || index[nameStr] || existingKeys[keyStr] {
+		if existingCerts[nameStr] || existingKeys[keyStr] {
+			// Just in case the cert not marked as published
+			index.ensureGroup(nameStr, groupStr, opts.Published)
 			continue
 		}
 
@@ -548,7 +504,7 @@ func (a *App) importPeerCerts(blobs [][]byte) ([]identityEntry, error) {
 
 		existingCerts[nameStr] = true
 		existingKeys[keyStr] = true
-		index[nameStr] = false
+		index.ensureGroup(nameStr, groupStr, opts.Published)
 
 		identity, _ := security.GetIdentityFromKeyName(keyName)
 		imported = append(imported, identityEntry{
@@ -557,7 +513,6 @@ func (a *App) importPeerCerts(blobs [][]byte) ([]identityEntry, error) {
 			CertName:   nameStr,
 			HasPrivate: false,
 			Source:     "peer",
-			Published:  false,
 		})
 	}
 	if err := a.persistPeerIndex(index); err != nil {
@@ -642,91 +597,34 @@ func (a *App) deleteIdentityEntry(certName enc.Name) error {
 		return err
 	}
 
-	// Delete certificate from store and keychain blobs.
-	removeNames := []string{hashName(wire, keychain.EXT_CERT)}
-	if err := a.store.Remove(certName); err != nil {
-		return err
-	}
-
+	nameStr := certData.Name().String()
 	index := a.loadPeerIndex()
-	_, managedPeer := index[certName.String()]
+	_, managedPeer := index[nameStr]
 	issuerIsIdentity := certData.Name().At(-2).Equal(identityIssuer)
-	localHasKey := false
 	if issuerIsIdentity {
 		hasKey, err := a.localIdentityHasKeyName(keyName)
 		if err != nil {
 			return err
 		}
-		localHasKey = hasKey
-	}
-
-	if issuerIsIdentity && localHasKey {
-		// Managed local identity key: remove the signing key as well.
-		idName, err := a.identityName()
-		if err != nil {
-			return err
-		}
-		id := a.keychain.IdentityByName(idName)
-		if id != nil {
-			for _, key := range id.Keys() {
-				if key.KeyName().Equal(keyName) {
-					secret, err := sig.MarshalSecret(key.Signer())
-					if err == nil {
-						removeNames = append(removeNames, hashName(secret.Join(), keychain.EXT_KEY))
-					}
-					break
-				}
-			}
-		}
-		extraNames, err := a.keychainRemoveNamesForKeyName(keyName)
-		if err != nil {
-			return err
-		}
-		removeNames = append(removeNames, extraNames...)
-		if managedPeer {
-			delete(index, certName.String())
-			if err := a.persistPeerIndex(index); err != nil {
+		if hasKey {
+			if err := a.keychain.DeleteKey(keyName); err != nil {
 				return err
 			}
+		} else if err := a.keychain.DeleteCert(certData.Name()); err != nil {
+			return err
 		}
-	} else if managedPeer {
-		// Remove peer entry from index.
-		delete(index, certName.String())
+	} else if err := a.keychain.DeleteCert(certData.Name()); err != nil {
+		return err
+	}
+
+	if managedPeer {
+		delete(index, nameStr)
 		if err := a.persistPeerIndex(index); err != nil {
 			return err
 		}
-	} else {
-		// Certificate exists but is not tracked; still remove the cert blob.
 	}
 
-	api := js.Global().Get("_ndnd_keychain_js")
-	if !api.Truthy() {
-		return fmt.Errorf("Keychain store unavailable")
-	}
-	jsNames := js.Global().Get("Array").New(len(removeNames))
-	for i, n := range removeNames {
-		jsNames.SetIndex(i, js.ValueOf(n))
-	}
-	if _, err := jsutil.Await(api.Call("remove", jsNames)); err != nil {
-		return err
-	}
-
-	// Reload keychain to reflect changes
-	kc, err := keychain.NewKeyChainJS(js.Global().Get("_ndnd_keychain_js"), a.store)
-	if err != nil {
-		return err
-	}
-	a.keychain = kc
-
-	if err != nil {
-		return err
-	}
 	return nil
-}
-
-func hashName(wire []byte, ext string) string {
-	sum := sha256.Sum256(wire)
-	return hex.EncodeToString(sum[:]) + ext
 }
 
 func selectPrimaryIdentityEntry(entries []identityEntry) identityEntry {
@@ -783,4 +681,44 @@ func certVersion(nameStr string) uint64 {
 		return 0
 	}
 	return name.At(-1).NumberVal()
+}
+
+func (idx peerPublishIndex) ensureGroup(cert, group string, published bool) {
+	if cert == "" {
+		return
+	}
+	groups, ok := idx[cert]
+	if !ok {
+		groups = make(map[string]bool)
+		idx[cert] = groups
+	}
+	if _, exists := groups[group]; !exists {
+		groups[group] = published
+	} else if published {
+		groups[group] = true
+	}
+}
+
+func (idx peerPublishIndex) publishedInGroup(cert, group string) bool {
+	if groups, ok := idx[cert]; ok {
+		if v, exists := groups[group]; exists {
+			return v
+		}
+	}
+	return false
+}
+
+// ensurePeerGroup initializes publish tracking entries for the given group.
+func (a *App) ensurePeerGroup(group enc.Name) error {
+	index := a.loadPeerIndex()
+	groupStr := group.String()
+
+	peers, err := a.peerIdentityEntries()
+	if err != nil {
+		return err
+	}
+	for _, peer := range peers {
+		index.ensureGroup(peer.CertName, groupStr, index.publishedInGroup(peer.CertName, groupStr))
+	}
+	return a.persistPeerIndex(index)
 }

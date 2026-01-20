@@ -229,7 +229,14 @@ func (a *App) JsApi() js.Value {
 				blobs[i] = jsutil.JsArrayToSlice(blobArr.Index(i))
 			}
 
-			entries, err := a.importPeerCerts(blobs)
+			group := enc.Name(nil)
+			if a.bootSyncSession != nil {
+				group = a.bootSyncSession.group
+			}
+			entries, err := a.importPeerCerts(blobs, peerCertImportOpts{
+				Published: false,
+				Group:     group,
+			})
 			if err != nil {
 				return nil, err
 			}

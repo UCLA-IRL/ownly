@@ -45,15 +45,17 @@
         <table class="table is-fullwidth is-hoverable wide-table">
           <thead>
             <tr>
-              <th>Key name</th>
-              <th>Certificate</th>
+              <th>Identity</th>
+              <th>Key ID</th>
+              <th>Created</th>
               <th class="has-text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="key in localKeys" :key="key.certName">
-              <td><code>{{ key.keyName }}</code></td>
-              <td><code>{{ key.certName }}</code></td>
+            <tr v-for="key in localKeyRows" :key="key.certName">
+              <td><code :title="key.identityTitle">{{ key.identityLabel }}</code></td>
+              <td><code :title="key.keyIdTitle">{{ key.keyIdLabel }}</code></td>
+              <td><span :title="key.createdTitle">{{ key.createdLabel }}</span></td>
               <td class="has-text-right">
                 <button
                   class="button is-small mr-1"
@@ -83,7 +85,8 @@
         <header class="card-head">
           <div>
             <p class="is-size-6 has-text-weight-semibold">Authenticated peers</p>
-            <p class="is-size-7">Import self-signed peer certificates to trust them.</p>
+            <p class="is-size-7">Import self-signed peer certificates to trust them. You automatically accept peer certificates imported by your workspace owners,
+              but you can always delete them later. These certificates are only used when you accept or issue an invitation and are not used to secure data.</p>
           </div>
           <div class="actions">
             <label class="button is-small is-primary" :class="{ 'is-loading': busy && action === 'import-peer' }">
@@ -130,18 +133,20 @@
               <th style="width: 40px">
                 <input type="checkbox" :checked="allPeersSelected" :disabled="!peerKeys.length" @change="toggleAllPeers" />
               </th>
-              <th>Key name</th>
-              <th>Certificate</th>
+              <th>Identity</th>
+              <th>Key ID</th>
+              <th>Created</th>
               <th class="has-text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="peer in peerKeys" :key="peer.certName">
+            <tr v-for="peer in peerKeyRows" :key="peer.certName">
               <td>
                 <input type="checkbox" :checked="selectedPeers.has(peer.certName)" @change="togglePeer(peer.certName)" />
               </td>
-              <td><code>{{ peer.keyName }}</code></td>
-              <td><code>{{ peer.certName }}</code></td>
+              <td><code :title="peer.identityTitle">{{ peer.identityLabel }}</code></td>
+              <td><code :title="peer.keyIdTitle">{{ peer.keyIdLabel }}</code></td>
+              <td><span :title="peer.createdTitle">{{ peer.createdLabel }}</span></td>
               <td class="has-text-right">
                 <button class="button is-small mr-1" :disabled="busy" @click="exportPeer(peer.certName)">
                   Export
@@ -211,7 +216,12 @@ import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import ModalComponent from '@/components/ModalComponent.vue';
 import ndn, { type IdentityKeyInfo } from '@/services/ndn';
 import { Toast } from '@/utils/toast';
-import { formatIdentityFilename } from '@/utils/identity';
+import {
+  certNameToDate,
+  describeKeyId,
+  deriveIdentityFromKeyName,
+  formatIdentityFilename,
+} from '@/utils/identity';
 import { describeIdentityKeyImportError, describePeerCertImportError } from '@/utils/identity-errors';
 import { decodeQrDataPayload, decryptSecretPayload } from '@/utils/qr-crypto';
 import QrModal from '@/components/QrModal.vue';
@@ -252,6 +262,55 @@ const scannerMessage = computed(() =>
 
 const allPeersSelected = computed(
   () => peerKeys.value.length > 0 && selectedPeers.value.size === peerKeys.value.length,
+);
+
+const createdAtFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+const localKeyRows = computed(() =>
+  localKeys.value.map((entry) => {
+    const identityLabel = entry.identity || deriveIdentityFromKeyName(entry.keyName) || '--';
+    const identityTitle = entry.identity || deriveIdentityFromKeyName(entry.keyName) || 'Unknown identity';
+    const keyIdLabel = describeKeyId(entry.keyName || entry.certName) || entry.certName || entry.keyName;
+    const keyIdTitle = entry.keyName || entry.certName;
+    const createdAt = certNameToDate(entry.certName);
+    const createdLabel = createdAt ? createdAtFormatter.format(createdAt) : '--';
+    const createdTitle = createdAt ? createdAt.toISOString() : 'Unknown creation time';
+
+    return {
+      ...entry,
+      identityLabel,
+      identityTitle,
+      keyIdLabel,
+      keyIdTitle,
+      createdLabel,
+      createdTitle,
+    };
+  }),
+);
+
+const peerKeyRows = computed(() =>
+  peerKeys.value.map((entry) => {
+    const identityLabel = entry.identity || deriveIdentityFromKeyName(entry.keyName) || '--';
+    const identityTitle = entry.identity || deriveIdentityFromKeyName(entry.keyName) || 'Unknown identity';
+    const keyIdLabel = describeKeyId(entry.keyName || entry.certName) || entry.certName || entry.keyName;
+    const keyIdTitle = entry.keyName || entry.certName;
+    const createdAt = certNameToDate(entry.certName);
+    const createdLabel = createdAt ? createdAtFormatter.format(createdAt) : '--';
+    const createdTitle = createdAt ? createdAt.toISOString() : 'Unknown creation time';
+
+    return {
+      ...entry,
+      identityLabel,
+      identityTitle,
+      keyIdLabel,
+      keyIdTitle,
+      createdLabel,
+      createdTitle,
+    };
+  }),
 );
 
 watch(
@@ -696,28 +755,20 @@ async function confirmSecretImport() {
 }
 
 .wide-table {
-  table-layout: fixed;
+  table-layout: auto;
 }
 
-.wide-table th:nth-child(1),
-.wide-table td:nth-child(1),
-.wide-table th:nth-child(2),
-.wide-table td:nth-child(2) {
-  width: 40%;
+.wide-table td.name-col,
+.wide-table th.name-col {
+  width: 80%;
+  min-width: 520px;
+  white-space: nowrap;
 }
 
 .wide-table code {
   word-break: break-all;
   white-space: normal;
   display: inline-block;
-}
-
-.optin-row {
-  margin: 6px 0 10px;
-}
-
-.optin-row input {
-  margin-right: 6px;
 }
 
 :deep(.modal-content) {
