@@ -182,19 +182,19 @@
       </div>
 
       <div class="box anim-rtl-fade p-4" v-else-if="flowStep === 'identity'">
-        <div class="header is-size-4 has-text-weight-semibold">Add your identity secret</div>
+        <div class="header is-size-4 has-text-weight-semibold">Add your Identity Secret</div>
         <p class="subtitle mt-1">
-          Import an existing identity secret or generate a new one for <code>{{ identityName || '--' }}</code>.
+          Import an existing Identity Secret or generate a new one for <code>{{ identityName || '--' }}</code>.
         </p>
 
         <div class="identity-card mt-4">
           <div class="field">
-            <label class="label is-small">Identity name</label>
+            <label class="label is-small">Identity Name</label>
             <code class="identity-name">{{ identityName || '--' }}</code>
           </div>
 
           <div class="field mt-3">
-            <label>Import an existing identity secret (.ndnkey)</label>
+            <label>Import an existing Identity Secret (.ndnkey)</label>
             <div class="file has-name is-boxed mt-2">
               <label class="file-label">
                 <input
@@ -221,7 +221,7 @@
               :disabled="identityBusy"
               @click="openIdentityScanner"
             >
-              Scan encrypted identity secret QR
+              Scan QR Code for Identity Secret
             </button>
             <p class="help is-info mt-2">
               You will be prompted for the password to decrypt the QR export.
@@ -240,7 +240,7 @@
 
           <p class="help is-danger mt-2" v-if="identityError">{{ identityError }}</p>
           <p class="help is-info mt-1">
-            Identity secrets are only used to authenticate you when you join a workspace. They are never used to secure application data.
+            Identity Secrets are only used to authenticate you when you join a workspace. They are never used to secure application data.
           </p>
         </div>
       </div>
@@ -260,8 +260,8 @@
     />
 
     <ModalComponent :show="showSecretPasswordModal" @close="closePasswordModal">
-      <div class="title is-5 mb-3">Decrypt identity secret</div>
-      <p class="mb-3">Enter the password used when generating the encrypted identity secret QR.</p>
+      <div class="title is-5 mb-3">Decrypt Identity Secret</div>
+      <p class="mb-3">Enter the password used when generating the encrypted Identity Secret QR.</p>
       <div class="field">
         <label class="label is-small">Password</label>
         <div class="control">

@@ -3,7 +3,7 @@
     <Transition name="fade-2">
       <div class="modal is-active anim-fade" v-if="show || loading">
         <div class="modal-background"></div>
-        <div class="modal-content">
+        <div class="modal-content" :class="contentClass">
           <LoadingSpinner v-if="loading" class="fixed-center" />
 
           <div class="box" v-if="show">
@@ -30,6 +30,10 @@ const props = defineProps({
   loading: {
     type: Boolean,
     default: false,
+  },
+  contentClass: {
+    type: [String, Array, Object],
+    default: undefined,
   },
 });
 

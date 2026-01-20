@@ -17,7 +17,7 @@
     </template>
 
     <template v-else>
-      <div class="title is-5 mb-4">Share your identity</div>
+      <div class="title is-5 mb-4">Share Your Primary Identity Certificate</div>
 
       <p>
         This is your global Ownly identity. Share the identity certificate via QR or download it as a file so
@@ -32,7 +32,7 @@
       <img class="qr" v-if="certQrimg" :src="certQrimg" />
 
       <div class="mt-4">
-        <label class="label is-small">Encrypt identity secret for sharing</label>
+        <label class="label is-small">Encrypt Identity Secret for sharing</label>
         <p class="is-size-7 mb-2">
           Create a password-protected QR code containing your identity secret. Share the
           password separately.

@@ -1,5 +1,5 @@
 <template>
-  <ModalComponent :show="show" @close="emit('close')">
+  <ModalComponent :show="show" content-class="identity-key-modal" @close="emit('close')">
     <div class="title is-5 mb-1">Identity keys</div>
     <p class="mb-4">
       Your identity key is your global ID in Ownly. It authenticates you across workspaces; it does not secure your data.
@@ -13,8 +13,8 @@
       <article class="card-block">
         <header class="card-head">
           <div>
-            <p class="is-size-6 has-text-weight-semibold">My identity keys</p>
-            <p class="is-size-7">Identity name: <code>{{ identity || '--' }}</code></p>
+            <p class="is-size-6 has-text-weight-semibold">My Identity Keys</p>
+            <p class="is-size-7">Identity Name: <code>{{ identity || '--' }}</code></p>
           </div>
           <div class="actions">
             <label class="button is-small is-primary" :class="{ 'is-loading': busy && action === 'import-id' }">
@@ -24,7 +24,7 @@
                 accept=".ndnkey"
                 @change="onIdentityImport"
               />
-              Import identity secret
+              Import Identity Secret
             </label>
             <div class="stack-actions">
               <button
@@ -33,10 +33,10 @@
                 :disabled="busy"
                 @click="generateIdentityKey"
               >
-                Generate new key
+                Generate New Identity Key
               </button>
               <button class="button is-small" :disabled="busy" @click="openScanner('secret')">
-                Scan encrypted identity QR
+                Scan QR Code for Identity Secret
               </button>
             </div>
           </div>
@@ -45,36 +45,50 @@
         <table class="table is-fullwidth is-hoverable wide-table">
           <thead>
             <tr>
-              <th>Identity</th>
-              <th>Key ID</th>
+              <th class="name-col">Identity</th>
+              <th class="name-col">Key ID</th>
               <th>Created</th>
               <th class="has-text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="key in localKeyRows" :key="key.certName">
-              <td><code :title="key.identityTitle">{{ key.identityLabel }}</code></td>
-              <td><code :title="key.keyIdTitle">{{ key.keyIdLabel }}</code></td>
+              <td class="name-col"><code :title="key.identityTitle">{{ key.identityLabel }}</code></td>
+              <td class="name-col"><code :title="key.keyIdTitle">{{ key.keyIdLabel }}</code></td>
               <td><span :title="key.createdTitle">{{ key.createdLabel }}</span></td>
-              <td class="has-text-right">
-                <button
-                  class="button is-small mr-1"
-                  :class="{ 'is-loading': busy && action === 'export-id' }"
-                  :disabled="busy"
-                  @click="exportIdentityKey(key)"
-                >
-                  Export secret
-                </button>
-                <button class="button is-small mr-1" :disabled="busy" @click="exportIdentityCert(key)">
-                  Download cert
-                </button>
-                <button class="button is-small is-text has-text-danger" :disabled="busy" @click="deleteEntry(key)">
-                  Delete
-                </button>
+              <td class="has-text-right actions-stack">
+                <div class="action-col">
+                  <button
+                    class="button is-small is-fullwidth is-primary"
+                    :class="{ 'is-loading': busy && action === 'export-id' }"
+                    :disabled="busy"
+                    @click="exportIdentityKey(key)"
+                  >
+                    Export
+                  </button>
+                </div>
+                <div class="action-col">
+                  <button
+                    class="button is-small is-fullwidth is-link"
+                    :disabled="busy"
+                    @click="exportIdentityCert(key)"
+                  >
+                    Download
+                  </button>
+                </div>
+                <div class="action-col">
+                  <button
+                    class="button is-small is-fullwidth is-danger is-light"
+                    :disabled="busy"
+                    @click="deleteEntry(key)"
+                  >
+                    Delete
+                  </button>
+                </div>
               </td>
             </tr>
             <tr v-if="!localKeys.length">
-              <td colspan="3" class="has-text-grey">No identity keys yet.</td>
+              <td colspan="3" class="has-text-grey">No Identity Keys yet.</td>
             </tr>
           </tbody>
         </table>
@@ -84,7 +98,7 @@
       <article class="card-block">
         <header class="card-head">
           <div>
-            <p class="is-size-6 has-text-weight-semibold">Authenticated peers</p>
+            <p class="is-size-6 has-text-weight-semibold">Authenticated Peers</p>
             <p class="is-size-7">Import self-signed peer certificates to trust them. You automatically accept peer certificates imported by your workspace owners,
               but you can always delete them later. These certificates are only used when you accept or issue an invitation and are not used to secure data.</p>
           </div>
@@ -97,7 +111,7 @@
                 accept=".cert,.ndn,.pem,application/octet-stream"
                 @change="onPeerImport"
               />
-              Import peer certs
+              Import Peer Certificates
             </label>
             <div class="stack-actions">
               <button
@@ -106,14 +120,14 @@
                 :class="{ 'is-loading': busy && action === 'export-peer' }"
                 @click="exportSelectedPeers"
               >
-                Export selected
+                Export Selected
               </button>
               <button
                 class="button is-small"
                 :disabled="busy"
                 @click="openScanner('peer')"
               >
-                Scan peer cert QR
+                Scan Peer Certificate
               </button>
             </div>
             <button
@@ -122,7 +136,7 @@
               :class="{ 'is-loading': busy && action === 'delete-peer' }"
               @click="deleteSelectedPeers"
             >
-              Delete selected
+              Delete Selected
             </button>
           </div>
         </header>
@@ -133,8 +147,8 @@
               <th style="width: 40px">
                 <input type="checkbox" :checked="allPeersSelected" :disabled="!peerKeys.length" @change="toggleAllPeers" />
               </th>
-              <th>Identity</th>
-              <th>Key ID</th>
+              <th class="name-col">Identity</th>
+              <th class="name-col">Key ID</th>
               <th>Created</th>
               <th class="has-text-right">Actions</th>
             </tr>
@@ -144,16 +158,24 @@
               <td>
                 <input type="checkbox" :checked="selectedPeers.has(peer.certName)" @change="togglePeer(peer.certName)" />
               </td>
-              <td><code :title="peer.identityTitle">{{ peer.identityLabel }}</code></td>
-              <td><code :title="peer.keyIdTitle">{{ peer.keyIdLabel }}</code></td>
+              <td class="name-col"><code :title="peer.identityTitle">{{ peer.identityLabel }}</code></td>
+              <td class="name-col"><code :title="peer.keyIdTitle">{{ peer.keyIdLabel }}</code></td>
               <td><span :title="peer.createdTitle">{{ peer.createdLabel }}</span></td>
-              <td class="has-text-right">
-                <button class="button is-small mr-1" :disabled="busy" @click="exportPeer(peer.certName)">
-                  Export
-                </button>
-                <button class="button is-small is-text has-text-danger" :disabled="busy" @click="deleteEntry(peer)">
-                  Delete
-                </button>
+              <td class="has-text-right actions-stack">
+                <div class="action-col">
+                  <button class="button is-small is-fullwidth is-primary" :disabled="busy" @click="exportPeer(peer.certName)">
+                    Download
+                  </button>
+                </div>
+                <div class="action-col">
+                  <button
+                    class="button is-small is-fullwidth is-danger is-light"
+                    :disabled="busy"
+                    @click="deleteEntry(peer)"
+                  >
+                    Delete
+                  </button>
+                </div>
               </td>
             </tr>
             <tr v-if="!peerKeys.length">
@@ -466,7 +488,7 @@ async function onPeerImport(event: Event) {
     }
     const imported = await ndn.api.import_peer_certs(buffers);
     if (!imported.length) {
-      const message = 'No valid peer certificates found.';
+      const message = 'No peer certificate imported.';
       peerError.value = message;
       Toast.error(`Failed to import peer certificates: ${message}`);
       return;
@@ -663,7 +685,7 @@ async function onScan(raw: string) {
       const bytes = decodeQrDataPayload(raw);
       const imported = await ndn.api.import_peer_certs([bytes]);
       if (!imported.length) {
-        const message = 'No valid peer certificates found.';
+        const message = 'No peer certificate imported.';
         peerError.value = message;
         Toast.error(`Failed to import from QR code: ${message}`);
       } else {
@@ -709,7 +731,7 @@ async function confirmSecretImport() {
     const secret = await decryptSecretPayload(scannedSecretPayload.value, secretPassword.value);
     const entry = await ndn.api.import_identity_key(secret);
     upsertLocalKey(entry);
-    Toast.success('Identity secret imported');
+    Toast.success('Identity Secret imported');
     closeSecretPasswordModal(true);
   } catch (err) {
     console.error(err);
@@ -730,6 +752,7 @@ async function confirmSecretImport() {
   padding: 12px;
   margin-bottom: 18px;
   overflow: hidden;
+  font-size: 1.05rem;
 }
 
 .card-head {
@@ -760,8 +783,8 @@ async function confirmSecretImport() {
 
 .wide-table td.name-col,
 .wide-table th.name-col {
-  width: 80%;
-  min-width: 520px;
+  width: 25%;
+  min-width: 100px;
   white-space: nowrap;
 }
 
@@ -771,13 +794,34 @@ async function confirmSecretImport() {
   display: inline-block;
 }
 
-:deep(.modal-content) {
-  width: 95vw;
-  max-width: 2200px;
-  min-width: 320px;
+.wide-table th {
+  text-align: center !important;
 }
 
-:deep(.modal-content .box) {
+.actions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.actions-stack .action-col {
+  display: flex;
+  width: 100%;
+}
+
+.actions-stack .button {
+  justify-content: center;
+  width: 100%;
+}
+
+:global(.identity-key-modal) {
+  width: 100vw;
+  max-width: 3200px;
+  min-width: 850px;
+}
+
+:global(.identity-key-modal .box) {
   width: 100%;
   min-height: 70vh;
 }

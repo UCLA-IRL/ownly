@@ -120,7 +120,7 @@
       <div class="id-share">
         <a @click="showIdentity = true">
           <FontAwesomeIcon class="mr-1" :icon="faQrcode" size="sm" />
-          Share your Identity
+          Share Your Identity
         </a>
       </div>
 

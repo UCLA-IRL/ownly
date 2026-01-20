@@ -8,11 +8,11 @@
             You can create or join one or more workspaces below
           </p>
           <div class="mt-3">
-            <button class="button identity-button is-small-caps" @click="showIdentityManager = true">
+            <button class="button identity-button" @click="showIdentityManager = true">
               <span class="icon">
                 <FontAwesomeIcon :icon="faKey" />
               </span>
-              <span>Manage identity keys</span>
+              <span>Manage Identity Keys</span>
             </button>
           </div>
         </div>
@@ -151,20 +151,21 @@ async function openByName(name: string): Promise<boolean> {
 }
 
 .identity-button {
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  color: #fff;
+  border-radius: 10px;
+  background: #f4f7ff;
+  border: 1px solid rgba(63, 81, 181, 0.5);
+  color: #263238;
   padding: 0.55rem 1.1rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  letter-spacing: 0.01em;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.12);
+  text-transform: none;
 }
 
 .identity-button:hover {
-  background: rgba(255, 255, 255, 0.28);
-  border-color: rgba(255, 255, 255, 0.6);
-  color: #fff;
+  background: #e6edff;
+  border-color: rgba(63, 81, 181, 0.7);
+  color: #1b2836;
 }
 
 .identity-button .icon {
