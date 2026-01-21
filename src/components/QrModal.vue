@@ -21,8 +21,8 @@
 
       <p>
         This is your global Ownly identity. Share the identity certificate via QR or download it as a file so
-        others can configure it as a trusted key in their Ownly profiles. (It is only used to authenticates you;
-        it doesn't protect your workspace data.)
+        others can configure it as a trusted key in their Ownly profiles. (It is only used to authenticates you
+        when you invite or take invitations; workspace data are secured by different keys.)
       </p>
 
       <p class="my-1">
@@ -34,7 +34,7 @@
       <div class="mt-4">
         <label class="label is-small">Encrypt Identity Secret for sharing</label>
         <p class="is-size-7 mb-2">
-          Create a password-protected QR code containing your identity secret. Share the
+          Create a password-protected QR code containing your Identity Secret. Share the
           password separately.
         </p>
         <div class="field has-addons">

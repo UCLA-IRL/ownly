@@ -737,7 +737,7 @@ async function confirmSecretImport() {
     console.error(err);
     const message = describeIdentityKeyImportError(err);
     secretPasswordError.value = message;
-    Toast.error(`Failed to import identity secret: ${message}`);
+    Toast.error(`Failed to import Identity Secret: ${message}`);
   } finally {
     busy.value = false;
     action.value = null;
