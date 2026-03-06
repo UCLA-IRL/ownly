@@ -205,13 +205,17 @@ export class Workspace {
    * @param label Display name
    * @param wksp Workspace name
    * @param create Create the workspace if it does not exist
+   * @param ignore Ignore validity checks while consuming workspace data
    * @param psk Pre-shared key for encryption
+   * @param payload App-defined payload passed to boot sync; pass null when unused
    */
   public static async join(
     label: string,
     wksp: string,
-    create: boolean, ignore: boolean,
+    create: boolean,
+    ignore: boolean,
     psk: Uint8Array | null,
+    payload: Uint8Array | null,
   ): Promise<string> {
     const metadata = await _o.stats.get(wksp);
     if (metadata) throw new Error('You have already joined this workspace');
@@ -229,7 +233,7 @@ export class Workspace {
     if (create && dsk) globalThis.crypto.getRandomValues(dsk);
 
     // Join workspace - this will check invitation etc.
-    const finalName = await ndn.api.join_workspace(wksp, create);
+    const finalName = await ndn.api.join_workspace(wksp, create, payload);
 
     // Check if we have the owner permissions
     const isOwner = await ndn.api.is_workspace_owner(finalName);

@@ -17,6 +17,7 @@ import (
 	ndn_sync "github.com/named-data/ndnd/std/sync"
 	"github.com/named-data/ndnd/std/types/optional"
 	jsutil "github.com/named-data/ndnd/std/utils/js"
+	"github.com/pulsejet/ownly/ndn/app/tlv"
 )
 
 type bootSyncSession struct {
@@ -176,7 +177,7 @@ func (a *App) participantSub(client ndn.Client) error {
 	return nil
 }
 
-func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc.Name, preCert enc.Wire) error {
+func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc.Name, preCert enc.Wire, appPayload []byte) error {
 	// shortcut to check if we already started
 	group := wkspName.Append(enc.NewKeywordComponent("boot"))
 	key := "boot-pub:" + group.String()
@@ -216,13 +217,18 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 	}
 	preCertName = preData.Name().ToFullName(preCert)
 
-	// Notify anyway
-	if _, state, err := alo.Publish(enc.Wire{preCertName.Bytes()}); err != nil {
+	bootPayload := (&tlv.Message{
+		BootJoin: &tlv.BootJoin{
+			PreCertFullName: preCertName.Bytes(),
+			AppPayload:      appPayload,
+		},
+	}).Encode()
+	if _, state, err := alo.Publish(bootPayload); err != nil {
 		log.Error(a, "Failed to publish precert", "err", err)
 		return err
 	} else {
 		a.PersistBootState(state)
-		log.Info(a, "Published precert for signing", "name", preCertName)
+		log.Info(a, "Published precert for signing", "name", preCertName, "app_payload_len", len(appPayload))
 	}
 	return nil
 }
@@ -235,7 +241,8 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 	ownerPrefix := wkspName.Append(enc.NewKeywordComponent("owner"))
 
 	// Owner should subscribe to everything and get three types of data
-	// 1. the full name of user precert, 2. user final cert, 3. repo command to fetch invitation
+	// 1. participant join payload carrying user precert full name (+ optional app payload),
+	// 2. user final cert, 3. repo command to fetch invitation
 	a.bootSyncSession.alo.SubscribePublisher(enc.Name{}, func(pub ndn_sync.SvsPub) {
 		content := pub.Content
 		// Case 1: content is a final cert (encapsulated Data).
@@ -261,18 +268,27 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 			}
 		}
 
-		// Case 2: precert fullname
-		preCertName, err := enc.NameFromBytes(content.Join())
-		if err == nil && preCertName != nil {
+		// Case 2: participant boot-join payload (strict TLV)
+		msg, err := tlv.ParseMessage(enc.NewWireView(content), true)
+		if err == nil && msg != nil && msg.BootJoin != nil {
+			preCertName, err := enc.NameFromBytes(msg.BootJoin.PreCertFullName)
+			if err != nil || preCertName == nil {
+				log.Warn(a, "Ignoring boot join payload with invalid precert name", "err", err)
+				return
+			}
+			keyName, err := security.GetKeyNameFromCertName(preCertName)
+			if err != nil || keyName == nil {
+				log.Warn(a, "Ignoring boot join payload with invalid precert key name", "err", err, "name", preCertName)
+				return
+			}
+			appPayload := msg.BootJoin.AppPayload
 			a.PersistBootState(pub.State)
 
 			// Skip if we already have a final cert for this precert.
-			if keyName, err := security.GetKeyNameFromCertName(preCertName); err == nil {
-				finalCertPrefix := keyName.Append(enc.NewGenericComponent("anchor"))
-				if finalCert, _ := client.LatestLocal(finalCertPrefix); finalCert != nil {
-					log.Info(a, "Already have a final cert for precert key, skipping")
-					return
-				}
+			finalCertPrefix := keyName.Append(enc.NewGenericComponent("anchor"))
+			if finalCert, _ := client.LatestLocal(finalCertPrefix); finalCert != nil {
+				log.Info(a, "Already have a final cert for precert key, skipping")
+				return
 			}
 
 			// In case we fetch too history precert
@@ -282,6 +298,20 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 				if t.Before(oneWeekAgo) {
 					log.Info(a, "Ignoring stale precert", "name", preCertName, "ts", t)
 					return
+				}
+			}
+
+			if len(appPayload) > 0 {
+				log.Info(a, "Received boot join payload", "name", preCertName, "app_payload_len", len(appPayload))
+			}
+			if !a.bootJoinPayloadCb.IsUndefined() && !a.bootJoinPayloadCb.IsNull() {
+				if _, cbErr := jsutil.Await(a.bootJoinPayloadCb.Invoke(
+					js.ValueOf(wkspName.String()),
+					js.ValueOf(preCertName.String()),
+					js.ValueOf(keyName.String()),
+					jsutil.SliceToJsArray(appPayload),
+				)); cbErr != nil {
+					log.Warn(a, "Boot join payload callback failed", "err", cbErr, "name", preCertName)
 				}
 			}
 

@@ -47,4 +47,14 @@ export const GlobalBus = new EventEmitter() as TypedEmitter<{
    * @param channels List of agent channels
    */
   'agent-channels': (channels: IAgentChannel[]) => void;
+
+  /**
+   * Event when owner receives a participant boot-join app payload.
+   */
+  'boot-join-payload': (
+    workspace: string,
+    preCertFullName: string,
+    preCertKeyName: string,
+    payload: Uint8Array,
+  ) => void;
 }>;

@@ -44,7 +44,7 @@ var SchemaBytes []byte
 
 // JoinWorkspace joins the workspace with the given name.
 // If the workspace does not exist, it will be created if create is true.
-func (a *App) JoinWorkspace(wkspStr_ string, create bool) (wkspStr string, err error) {
+func (a *App) JoinWorkspace(wkspStr_ string, create bool, payload []byte) (wkspStr string, err error) {
 	wkspName, err := enc.NameFromStr(wkspStr_)
 	if err != nil {
 		return
@@ -136,6 +136,13 @@ func (a *App) JoinWorkspace(wkspStr_ string, create bool) (wkspStr string, err e
 		log.Info(a, "Got workspace invitation", "name", wkspStr, "invite", args.Data.Name())
 	} else {
 		log.Info(a, "Joining workspace in own namespace", "name", wkspStr)
+	}
+
+	// Stash optional app payload so GetWorkspace can publish it in boot sync.
+	if len(payload) == 0 {
+		delete(a.joinPayloads, wkspStr)
+	} else {
+		a.joinPayloads[wkspStr] = payload
 	}
 	return
 }
@@ -241,6 +248,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	rootSigner := a.trust.Suggest(detectRoot)
 	var nodeName enc.Name
 	var preCertWire enc.Wire
+	var joinPayload []byte
 	var bootSyncFunc func() error
 
 	isOwner, _ := a.IsWorkspaceOwner(wkspName.String())
@@ -285,8 +293,9 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}
 		}
 		// User always willing to help
+		joinPayload = a.joinPayloads[wkspName.String()]
 		bootSyncFunc = func() error {
-			return a.StartBootSyncParticipant(client, wkspName, idName, preCertWire)
+			return a.StartBootSyncParticipant(client, wkspName, idName, preCertWire, joinPayload)
 		}
 	}
 

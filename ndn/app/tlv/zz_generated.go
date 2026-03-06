@@ -17,6 +17,7 @@ type MessageEncoder struct {
 	DSKRequest_encoder  DSKRequestEncoder
 	DSKResponse_encoder DSKResponseEncoder
 	DSKACK_encoder      DSKACKEncoder
+	BootJoin_encoder    BootJoinEncoder
 }
 
 type MessageParsingContext struct {
@@ -25,6 +26,7 @@ type MessageParsingContext struct {
 	DSKRequest_context  DSKRequestParsingContext
 	DSKResponse_context DSKResponseParsingContext
 	DSKACK_context      DSKACKParsingContext
+	BootJoin_context    BootJoinParsingContext
 }
 
 func (encoder *MessageEncoder) Init(value *Message) {
@@ -42,6 +44,9 @@ func (encoder *MessageEncoder) Init(value *Message) {
 	}
 	if value.DSKACK != nil {
 		encoder.DSKACK_encoder.Init(value.DSKACK)
+	}
+	if value.BootJoin != nil {
+		encoder.BootJoin_encoder.Init(value.BootJoin)
 	}
 
 	l := uint(0)
@@ -70,6 +75,11 @@ func (encoder *MessageEncoder) Init(value *Message) {
 		l += uint(enc.TLNum(encoder.DSKACK_encoder.Length).EncodingLength())
 		l += encoder.DSKACK_encoder.Length
 	}
+	if value.BootJoin != nil {
+		l += 1
+		l += uint(enc.TLNum(encoder.BootJoin_encoder.Length).EncodingLength())
+		l += encoder.BootJoin_encoder.Length
+	}
 	encoder.Length = l
 
 }
@@ -80,6 +90,7 @@ func (context *MessageParsingContext) Init() {
 	context.DSKRequest_context.Init()
 	context.DSKResponse_context.Init()
 	context.DSKACK_context.Init()
+	context.BootJoin_context.Init()
 }
 
 func (encoder *MessageEncoder) EncodeInto(value *Message, buf []byte) {
@@ -131,6 +142,15 @@ func (encoder *MessageEncoder) EncodeInto(value *Message, buf []byte) {
 			pos += encoder.DSKACK_encoder.Length
 		}
 	}
+	if value.BootJoin != nil {
+		buf[pos] = byte(208)
+		pos += 1
+		pos += uint(enc.TLNum(encoder.BootJoin_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.BootJoin_encoder.Length > 0 {
+			encoder.BootJoin_encoder.EncodeInto(value.BootJoin, buf[pos:])
+			pos += encoder.BootJoin_encoder.Length
+		}
+	}
 }
 
 func (encoder *MessageEncoder) Encode(value *Message) enc.Wire {
@@ -150,6 +170,7 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	var handled_DSKRequest bool = false
 	var handled_DSKResponse bool = false
 	var handled_DSKACK bool = false
+	var handled_BootJoin bool = false
 
 	progress := -1
 	_ = progress
@@ -206,6 +227,12 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 					handled_DSKACK = true
 					value.DSKACK, err = context.DSKACK_context.Parse(reader.Delegate(int(l)), ignoreCritical)
 				}
+			case 208:
+				if true {
+					handled = true
+					handled_BootJoin = true
+					value.BootJoin, err = context.BootJoin_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
 			default:
 				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
 					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
@@ -238,6 +265,9 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	}
 	if !handled_DSKACK && err == nil {
 		value.DSKACK = nil
+	}
+	if !handled_BootJoin && err == nil {
+		value.BootJoin = nil
 	}
 
 	if err != nil {
@@ -1001,6 +1031,158 @@ func (value *DSKACK) Bytes() []byte {
 
 func ParseDSKACK(reader enc.WireView, ignoreCritical bool) (*DSKACK, error) {
 	context := DSKACKParsingContext{}
+	context.Init()
+	return context.Parse(reader, ignoreCritical)
+}
+
+type BootJoinEncoder struct {
+	Length uint
+}
+
+type BootJoinParsingContext struct {
+}
+
+func (encoder *BootJoinEncoder) Init(value *BootJoin) {
+
+	l := uint(0)
+	if value.PreCertFullName != nil {
+		l += 3
+		l += uint(enc.TLNum(len(value.PreCertFullName)).EncodingLength())
+		l += uint(len(value.PreCertFullName))
+	}
+	if value.AppPayload != nil {
+		l += 3
+		l += uint(enc.TLNum(len(value.AppPayload)).EncodingLength())
+		l += uint(len(value.AppPayload))
+	}
+	encoder.Length = l
+
+}
+
+func (context *BootJoinParsingContext) Init() {
+
+}
+
+func (encoder *BootJoinEncoder) EncodeInto(value *BootJoin, buf []byte) {
+
+	pos := uint(0)
+
+	if value.PreCertFullName != nil {
+		buf[pos] = 253
+		binary.BigEndian.PutUint16(buf[pos+1:], uint16(1408))
+		pos += 3
+		pos += uint(enc.TLNum(len(value.PreCertFullName)).EncodeInto(buf[pos:]))
+		copy(buf[pos:], value.PreCertFullName)
+		pos += uint(len(value.PreCertFullName))
+	}
+	if value.AppPayload != nil {
+		buf[pos] = 253
+		binary.BigEndian.PutUint16(buf[pos+1:], uint16(1410))
+		pos += 3
+		pos += uint(enc.TLNum(len(value.AppPayload)).EncodeInto(buf[pos:]))
+		copy(buf[pos:], value.AppPayload)
+		pos += uint(len(value.AppPayload))
+	}
+}
+
+func (encoder *BootJoinEncoder) Encode(value *BootJoin) enc.Wire {
+
+	wire := make(enc.Wire, 1)
+	wire[0] = make([]byte, encoder.Length)
+	buf := wire[0]
+	encoder.EncodeInto(value, buf)
+
+	return wire
+}
+
+func (context *BootJoinParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*BootJoin, error) {
+
+	var handled_PreCertFullName bool = false
+	var handled_AppPayload bool = false
+
+	progress := -1
+	_ = progress
+
+	value := &BootJoin{}
+	var err error
+	var startPos int
+	for {
+		startPos = reader.Pos()
+		if startPos >= reader.Length() {
+			break
+		}
+		typ := enc.TLNum(0)
+		l := enc.TLNum(0)
+		typ, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+		l, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+
+		err = nil
+		if handled := false; true {
+			switch typ {
+			case 1408:
+				if true {
+					handled = true
+					handled_PreCertFullName = true
+					value.PreCertFullName = make([]byte, l)
+					_, err = reader.ReadFull(value.PreCertFullName)
+				}
+			case 1410:
+				if true {
+					handled = true
+					handled_AppPayload = true
+					value.AppPayload = make([]byte, l)
+					_, err = reader.ReadFull(value.AppPayload)
+				}
+			default:
+				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
+					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
+				}
+				handled = true
+				err = reader.Skip(int(l))
+			}
+			if err == nil && !handled {
+			}
+			if err != nil {
+				return nil, enc.ErrFailToParse{TypeNum: typ, Err: err}
+			}
+		}
+	}
+
+	startPos = reader.Pos()
+	err = nil
+
+	if !handled_PreCertFullName && err == nil {
+		value.PreCertFullName = nil
+	}
+	if !handled_AppPayload && err == nil {
+		value.AppPayload = nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
+}
+
+func (value *BootJoin) Encode() enc.Wire {
+	encoder := BootJoinEncoder{}
+	encoder.Init(value)
+	return encoder.Encode(value)
+}
+
+func (value *BootJoin) Bytes() []byte {
+	return value.Encode().Join()
+}
+
+func ParseBootJoin(reader enc.WireView, ignoreCritical bool) (*BootJoin, error) {
+	context := BootJoinParsingContext{}
 	context.Init()
 	return context.Parse(reader, ignoreCritical)
 }

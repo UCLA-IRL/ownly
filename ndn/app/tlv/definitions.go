@@ -12,6 +12,8 @@ type Message struct {
 	DSKResponse *DSKResponse `tlv:"0xCC"`
 	//+field:struct:DSKACK
 	DSKACK *DSKACK `tlv:"0xCE"`
+	//+field:struct:BootJoin
+	BootJoin *BootJoin `tlv:"0xD0"`
 }
 
 type AeadBlock struct {
@@ -45,4 +47,11 @@ type DSKResponse struct {
 type DSKACK struct {
 	//+field:binary
 	X25519Peer []byte `tlv:"0x57A"`
+}
+
+type BootJoin struct {
+	//+field:binary
+	PreCertFullName []byte `tlv:"0x580"`
+	//+field:binary
+	AppPayload []byte `tlv:"0x582"`
 }

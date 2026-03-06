@@ -64,7 +64,7 @@ interface NDNAPI {
   ): Promise<void>;
 
   /** Join Workspace (generate keys etc.) */
-  join_workspace(wksp: string, create: boolean): Promise<string>;
+  join_workspace(wksp: string, create: boolean, payload: Uint8Array | null): Promise<string>;
   /** Check if the user has owner permissions on the workspace */
   is_workspace_owner(wksp: string): Promise<boolean>;
 
@@ -75,6 +75,15 @@ interface NDNAPI {
   load_boot_state(
     load: (group: string) => Promise<Uint8Array | undefined>,
     persist: (group: string, state: Uint8Array) => Promise<void>,
+  ): Promise<void>;
+  /** Callback for owner receiving participant boot-join app payload */
+  on_boot_join_payload(
+    cb: (
+      workspace: string,
+      preCertFullName: string,
+      preCertKeyName: string,
+      payload: Uint8Array,
+    ) => Promise<void>,
   ): Promise<void>;
 
   /** Get a Workspace API */
@@ -253,6 +262,23 @@ class NDNService {
         );
       } catch (err) {
         console.error('Failed to register boot state persistence', err);
+      }
+    }
+
+    if (typeof this.api.on_boot_join_payload === 'function') {
+      try {
+        await this.api.on_boot_join_payload(
+          async (
+            workspace: string,
+            preCertFullName: string,
+            preCertKeyName: string,
+            payload: Uint8Array,
+          ) => {
+            GlobalBus.emit('boot-join-payload', workspace, preCertFullName, preCertKeyName, payload);
+          },
+        );
+      } catch (err) {
+        console.error('Failed to register boot join payload callback', err);
       }
     }
   }

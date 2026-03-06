@@ -44,9 +44,15 @@ type App struct {
 	// Active boot owner session (owners open one workspace at a time)
 	bootSyncSession *bootSyncSession
 
+	// Optional app-defined payload to publish with participant boot sync join.
+	joinPayloads map[string][]byte
+
 	// JS callbacks to load/persist boot SVS state
 	bootStateLoad    js.Value
 	bootStatePersist js.Value
+
+	// JS callback for owner-side participant boot join payloads.
+	bootJoinPayloadCb js.Value
 }
 
 var _ndnd_store_js = js.Global().Get("_ndnd_store_js")
@@ -66,10 +72,11 @@ func NewApp() *App {
 	}
 
 	a := &App{
-		store:     store,
-		keychain:  kc,
-		dskReqs:   make(map[string]*time.Timer),
-		bootSyncs: make(map[string]bool),
+		store:        store,
+		keychain:     kc,
+		dskReqs:      make(map[string]*time.Timer),
+		bootSyncs:    make(map[string]bool),
+		joinPayloads: make(map[string][]byte),
 	}
 	a.initialize()
 	return a
@@ -89,10 +96,11 @@ func NewNodeApp() *App {
 	}
 
 	a := &App{
-		store:     store,
-		keychain:  kc,
-		dskReqs:   make(map[string]*time.Timer),
-		bootSyncs: make(map[string]bool),
+		store:        store,
+		keychain:     kc,
+		dskReqs:      make(map[string]*time.Timer),
+		bootSyncs:    make(map[string]bool),
+		joinPayloads: make(map[string][]byte),
 	}
 
 	a.initialize()
@@ -170,9 +178,16 @@ func (a *App) JsApi() js.Value {
 			})
 		}),
 
-		// join_workspace(wksp: string, create: boolean): Promise<string>;
+		// join_workspace(wksp: string, create: boolean, payload: Uint8Array | null): Promise<string>;
 		"join_workspace": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			return a.JoinWorkspace(p[0].String(), p[1].Bool())
+			if len(p) < 3 || p[2].IsUndefined() {
+				return nil, fmt.Errorf("payload argument required: pass Uint8Array or null")
+			}
+			payload := []byte(nil)
+			if arg := p[2]; !arg.IsNull() {
+				payload = jsutil.JsArrayToSlice(arg)
+			}
+			return a.JoinWorkspace(p[0].String(), p[1].Bool(), payload)
 		}),
 
 		// is_workspace_owner(wksp: string): Promise<boolean>;
@@ -195,6 +210,16 @@ func (a *App) JsApi() js.Value {
 			// p[0]: load callback, p[1]: persist callback
 			a.bootStateLoad = p[0]
 			a.bootStatePersist = p[1]
+			return nil, nil
+		}),
+
+		// on_boot_join_payload(cb: (workspace: string, preCertFullName: string, preCertKeyName: string, payload: Uint8Array) => Promise<void>): Promise<void>;
+		"on_boot_join_payload": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			if len(p) == 0 || p[0].IsUndefined() || p[0].IsNull() {
+				a.bootJoinPayloadCb = js.Undefined()
+				return nil, nil
+			}
+			a.bootJoinPayloadCb = p[0]
 			return nil, nil
 		}),
 
