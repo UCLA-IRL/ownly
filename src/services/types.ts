@@ -18,6 +18,13 @@ export type IWkspStats = {
   dsk: string | null;
   /** DSK request key */
   dskExch?: string;
+  /** MLS-lite shared key */
+  mlsKey?: string;
+  /** Invitee already published MLS key package request */
+  mlsJoinRequested?: boolean;
+  mlsJoinRequestedAt?: number;
+  mlsJoinAttempts?: number;
+  mlsOwnerBootstrapped?: boolean;
 };
 
 export type IChatMessage = {

@@ -51,12 +51,21 @@ export class Workspace {
       await api.start();
 
       // Check if we have the encryption keys
-      if (!metadata.psk) throw new Error('Missing PSK');
-      if (!metadata.dsk) await Workspace.findDskRoutine(metadata, api);
-
-      // Set encryption keys
+      if (!metadata.psk) {
+        throw new Error('Missing PSK, cannot start workspace');
+      }
+      if (!metadata.dsk) {
+        await Workspace.findDskRoutine(metadata, api);
+      }
       await api.set_encrypt_keys(utils.fromHex(metadata.psk), utils.fromHex(metadata.dsk!));
 
+      if (metadata.mlsKey) {
+        const mlsKey = utils.fromHex(metadata.mlsKey);
+        if (mlsKey.length !== 32) {
+          throw new Error('Invalid MLS export key length != 32');
+        }
+        await api.set_encrypt_key(mlsKey);
+      }
       // Create general SVS group
       const provider = await SvsProvider.create(api, 'root');
 
@@ -64,6 +73,31 @@ export class Workspace {
       const chat = await WorkspaceChat.create(api, provider);
       const proj = await WorkspaceProjManager.create(api, provider);
       const invite = await WorkspaceInviteManager.create(api, metadata, provider);
+      
+      const shouldRequestMls =
+        !metadata.owner &&
+        !metadata.mlsKey &&
+        (
+          !metadata.mlsJoinRequested ||
+          !metadata.mlsJoinRequestedAt ||
+          Date.now() - metadata.mlsJoinRequestedAt > 5 * 60 * 1000 // retry after 5 min
+        );
+
+      if (shouldRequestMls) {
+        try {
+          await invite.publishKeyPackageRef();
+          metadata.mlsJoinRequested = true;
+          metadata.mlsJoinRequestedAt = Date.now();
+          metadata.mlsJoinAttempts = (metadata.mlsJoinAttempts ?? 0) + 1;
+          await _o.stats.put(metadata.name, metadata);
+        } catch (e) {
+          // keep workspace usable; retry next startup
+          console.warn('Failed to publish MLS key package ref', e);
+          metadata.mlsJoinRequested = false;
+          await _o.stats.put(metadata.name, metadata);
+        }
+      }
+
 
       // Create workspace object first (without agent)
       const workspace = new Workspace(metadata, api, provider, chat, proj, invite, null);

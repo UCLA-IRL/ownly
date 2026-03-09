@@ -12,6 +12,13 @@ type Message struct {
 	DSKResponse *DSKResponse `tlv:"0xCC"`
 	//+field:struct:DSKACK
 	DSKACK *DSKACK `tlv:"0xCE"`
+	//MLS messages
+	//+field:struct:MlsBlobRef
+	MlsKeyPackage *MlsBlobRef `tlv:"0xD0"`
+	//+field:struct:MlsBlobRef
+	MlsCommit *MlsBlobRef `tlv:"0xD2"`
+	//+field:struct:MlsBlobRef
+	MlsWelcome *MlsBlobRef `tlv:"0xD4"`
 }
 
 type AeadBlock struct {
@@ -45,4 +52,12 @@ type DSKResponse struct {
 type DSKACK struct {
 	//+field:binary
 	X25519Peer []byte `tlv:"0x57A"`
+}
+
+type MlsBlobRef struct {
+	//+field:string
+	Invitee string `tlv:"0x5A2"`
+
+	//+field:string
+	BlobName string `tlv:"0x5A4"`
 }

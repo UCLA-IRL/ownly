@@ -308,6 +308,21 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			return nil, nil
 		}),
 
+		// set_encrypt_key(key: Uint8Array): Promise<void>;
+		"set_encrypt_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			key := jsutil.JsArrayToSlice(p[0])
+			if len(key) == 0 {
+				return nil, fmt.Errorf("invalid key")
+			}
+
+			a.aes, err = aes.NewCipher(key)
+			if err != nil {
+				return nil, err
+			}
+			a.ivb = userKey.KeyName().Hash()
+			return nil, nil
+		}),
+
 		// start(): Promise<void>;
 		"start": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			if err := client.Start(); err != nil {
@@ -689,11 +704,85 @@ func (a *App) SvsAloJs(
 			return nil, nil
 		}),
 
+		// pub_mls_kp_ref(invitee: string, blobName: string): Promise<string>;
+		"pub_mls_kp_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee := p[0].String()
+			blobName := p[1].String()
+			log.Info(nil, "MLS KP publish request", "invitee", invitee, "blob", blobName)
+			if invitee == "" || blobName == "" { return nil, fmt.Errorf("invalid invitee or blob name") }
+
+			pub := &tlv.Message{
+				MlsKeyPackage: &tlv.MlsBlobRef{
+					Invitee: invitee,
+					BlobName: blobName,
+				},
+			}
+			name, state, err := alo.Publish(pub.Encode())
+			if err != nil {
+				return nil, err
+			}
+			log.Info(nil, "MLS KP published", "name", name, "boot", alo.BootTime(), "seq", alo.SeqNo())
+			// Persist state
+			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
+
+			return js.ValueOf(name.String()), nil
+		}),
+
+		// pub_mls_welcome_ref(invitee: string, blobName: string): Promise<string>;
+		"pub_mls_welcome_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee := p[0].String()
+			blobName := p[1].String()
+			if invitee == "" || blobName == "" { return nil, fmt.Errorf("invalid invitee or blob name") }
+
+			pub := &tlv.Message{
+				MlsWelcome: &tlv.MlsBlobRef{
+					Invitee: invitee,
+					BlobName: blobName,
+				},
+			}
+			name, state, err := alo.Publish(pub.Encode())
+			if err != nil {
+				return nil, err
+			}
+
+			// Persist state
+			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
+
+			return js.ValueOf(name.String()), nil
+		}),
+
+		// pub_mls_commit_ref(invitee: string, blobName: string): Promise<string>;
+		"pub_mls_commit_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee := p[0].String()
+			blobName := p[1].String()
+			if invitee == "" || blobName == "" { return nil, fmt.Errorf("invalid invitee or blob name") }
+
+			pub := &tlv.Message{
+				MlsCommit: &tlv.MlsBlobRef{
+					Invitee: invitee,
+					BlobName: blobName,
+				},
+			}
+			name, state, err := alo.Publish(pub.Encode())
+			if err != nil {
+				return nil, err
+			}
+
+			// Persist state
+			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
+
+			return js.ValueOf(name.String()), nil
+		}),
+
 		// subscribe(name: string, { on_yjs_delta }): Promise<void>;
 		"subscribe": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			// Send a list of publications to the JS callback
 			sendPub := func(pubs []ndn_sync.SvsPub) {
 				yjsDeltas := js.Global().Get("Array").New()
+				mlsKpRefs := js.Global().Get("Array").New()
+				mlsWelcomeRefs := js.Global().Get("Array").New()
+				mlsCommitRefs := js.Global().Get("Array").New()
+
 
 				for _, pub := range pubs {
 					pmsg, err := tlv.ParseMessage(enc.NewWireView(pub.Content), true)
@@ -758,6 +847,37 @@ func (a *App) SvsAloJs(
 							timer.Stop()
 							delete(a.dskReqs, peerHex)
 						}
+						
+					// Handle incoming MLS KeyPackage reference
+					case pmsg.MlsKeyPackage != nil:
+						log.Info(nil, "Decoded MLS KP ref", "invitee", pmsg.MlsKeyPackage.Invitee, "blob", pmsg.MlsKeyPackage.BlobName)
+						mlsKpRefs.Call("push", js.ValueOf(map[string]any{
+							"invitee":   pmsg.MlsKeyPackage.Invitee,
+							"blob_name": pmsg.MlsKeyPackage.BlobName,
+							"publisher": pub.Publisher.String(),
+							"boot_time": pub.BootTime,
+							"seq_num":   pub.SeqNum,
+						}))
+
+					// Handle incoming MLS Welcome reference
+					case pmsg.MlsWelcome != nil:
+						mlsWelcomeRefs.Call("push", js.ValueOf(map[string]any{
+							"invitee":   pmsg.MlsWelcome.Invitee,
+							"blob_name": pmsg.MlsWelcome.BlobName,
+							"publisher": pub.Publisher.String(),
+							"boot_time": pub.BootTime,
+							"seq_num":   pub.SeqNum,
+						}))
+
+					// Handle incoming MLS Commit reference
+					case pmsg.MlsCommit != nil:
+						mlsCommitRefs.Call("push", js.ValueOf(map[string]any{
+							"invitee":   pmsg.MlsCommit.Invitee,
+							"blob_name": pmsg.MlsCommit.BlobName,
+							"publisher": pub.Publisher.String(),
+							"boot_time": pub.BootTime,
+							"seq_num":   pub.SeqNum,
+						}))
 
 					default:
 						// This will be logged even for BlobFetch commands, which is fine
@@ -768,6 +888,28 @@ func (a *App) SvsAloJs(
 
 				if yjsDeltas.Get("length").Int() > 0 {
 					jsutil.Await(p[0].Get("on_yjs_delta").Invoke(yjsDeltas))
+				}
+
+				if mlsKpRefs.Get("length").Int() > 0 {
+					cb := p[0].Get("on_mls_kp_ref")
+					if cb.Type() == js.TypeFunction {
+						jsutil.Await(cb.Invoke(mlsKpRefs))
+					}
+				}
+
+				log.Info(nil, "MLS KP refs batch", "n", mlsKpRefs.Get("length").Int(), "cbType", p[0].Get("on_mls_kp_ref").Type().String())
+				if mlsWelcomeRefs.Get("length").Int() > 0 {
+					cb := p[0].Get("on_mls_welcome_ref")
+					if cb.Type() == js.TypeFunction {
+						jsutil.Await(cb.Invoke(mlsWelcomeRefs))
+					}
+				}
+
+				if mlsCommitRefs.Get("length").Int() > 0 {
+					cb := p[0].Get("on_mls_commit_ref")
+					if cb.Type() == js.TypeFunction {
+						jsutil.Await(cb.Invoke(mlsCommitRefs))
+					}
 				}
 			}
 

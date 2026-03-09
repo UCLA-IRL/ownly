@@ -12,19 +12,25 @@ import (
 type MessageEncoder struct {
 	Length uint
 
-	AeadBlock_encoder   AeadBlockEncoder
-	YjsDelta_encoder    YjsDeltaEncoder
-	DSKRequest_encoder  DSKRequestEncoder
-	DSKResponse_encoder DSKResponseEncoder
-	DSKACK_encoder      DSKACKEncoder
+	AeadBlock_encoder     AeadBlockEncoder
+	YjsDelta_encoder      YjsDeltaEncoder
+	DSKRequest_encoder    DSKRequestEncoder
+	DSKResponse_encoder   DSKResponseEncoder
+	DSKACK_encoder        DSKACKEncoder
+	MlsKeyPackage_encoder MlsBlobRefEncoder
+	MlsCommit_encoder     MlsBlobRefEncoder
+	MlsWelcome_encoder    MlsBlobRefEncoder
 }
 
 type MessageParsingContext struct {
-	AeadBlock_context   AeadBlockParsingContext
-	YjsDelta_context    YjsDeltaParsingContext
-	DSKRequest_context  DSKRequestParsingContext
-	DSKResponse_context DSKResponseParsingContext
-	DSKACK_context      DSKACKParsingContext
+	AeadBlock_context     AeadBlockParsingContext
+	YjsDelta_context      YjsDeltaParsingContext
+	DSKRequest_context    DSKRequestParsingContext
+	DSKResponse_context   DSKResponseParsingContext
+	DSKACK_context        DSKACKParsingContext
+	MlsKeyPackage_context MlsBlobRefParsingContext
+	MlsCommit_context     MlsBlobRefParsingContext
+	MlsWelcome_context    MlsBlobRefParsingContext
 }
 
 func (encoder *MessageEncoder) Init(value *Message) {
@@ -42,6 +48,15 @@ func (encoder *MessageEncoder) Init(value *Message) {
 	}
 	if value.DSKACK != nil {
 		encoder.DSKACK_encoder.Init(value.DSKACK)
+	}
+	if value.MlsKeyPackage != nil {
+		encoder.MlsKeyPackage_encoder.Init(value.MlsKeyPackage)
+	}
+	if value.MlsCommit != nil {
+		encoder.MlsCommit_encoder.Init(value.MlsCommit)
+	}
+	if value.MlsWelcome != nil {
+		encoder.MlsWelcome_encoder.Init(value.MlsWelcome)
 	}
 
 	l := uint(0)
@@ -70,6 +85,21 @@ func (encoder *MessageEncoder) Init(value *Message) {
 		l += uint(enc.TLNum(encoder.DSKACK_encoder.Length).EncodingLength())
 		l += encoder.DSKACK_encoder.Length
 	}
+	if value.MlsKeyPackage != nil {
+		l += 1
+		l += uint(enc.TLNum(encoder.MlsKeyPackage_encoder.Length).EncodingLength())
+		l += encoder.MlsKeyPackage_encoder.Length
+	}
+	if value.MlsCommit != nil {
+		l += 1
+		l += uint(enc.TLNum(encoder.MlsCommit_encoder.Length).EncodingLength())
+		l += encoder.MlsCommit_encoder.Length
+	}
+	if value.MlsWelcome != nil {
+		l += 1
+		l += uint(enc.TLNum(encoder.MlsWelcome_encoder.Length).EncodingLength())
+		l += encoder.MlsWelcome_encoder.Length
+	}
 	encoder.Length = l
 
 }
@@ -80,6 +110,9 @@ func (context *MessageParsingContext) Init() {
 	context.DSKRequest_context.Init()
 	context.DSKResponse_context.Init()
 	context.DSKACK_context.Init()
+	context.MlsKeyPackage_context.Init()
+	context.MlsCommit_context.Init()
+	context.MlsWelcome_context.Init()
 }
 
 func (encoder *MessageEncoder) EncodeInto(value *Message, buf []byte) {
@@ -131,6 +164,33 @@ func (encoder *MessageEncoder) EncodeInto(value *Message, buf []byte) {
 			pos += encoder.DSKACK_encoder.Length
 		}
 	}
+	if value.MlsKeyPackage != nil {
+		buf[pos] = byte(208)
+		pos += 1
+		pos += uint(enc.TLNum(encoder.MlsKeyPackage_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.MlsKeyPackage_encoder.Length > 0 {
+			encoder.MlsKeyPackage_encoder.EncodeInto(value.MlsKeyPackage, buf[pos:])
+			pos += encoder.MlsKeyPackage_encoder.Length
+		}
+	}
+	if value.MlsCommit != nil {
+		buf[pos] = byte(210)
+		pos += 1
+		pos += uint(enc.TLNum(encoder.MlsCommit_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.MlsCommit_encoder.Length > 0 {
+			encoder.MlsCommit_encoder.EncodeInto(value.MlsCommit, buf[pos:])
+			pos += encoder.MlsCommit_encoder.Length
+		}
+	}
+	if value.MlsWelcome != nil {
+		buf[pos] = byte(212)
+		pos += 1
+		pos += uint(enc.TLNum(encoder.MlsWelcome_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.MlsWelcome_encoder.Length > 0 {
+			encoder.MlsWelcome_encoder.EncodeInto(value.MlsWelcome, buf[pos:])
+			pos += encoder.MlsWelcome_encoder.Length
+		}
+	}
 }
 
 func (encoder *MessageEncoder) Encode(value *Message) enc.Wire {
@@ -150,6 +210,9 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	var handled_DSKRequest bool = false
 	var handled_DSKResponse bool = false
 	var handled_DSKACK bool = false
+	var handled_MlsKeyPackage bool = false
+	var handled_MlsCommit bool = false
+	var handled_MlsWelcome bool = false
 
 	progress := -1
 	_ = progress
@@ -206,6 +269,24 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 					handled_DSKACK = true
 					value.DSKACK, err = context.DSKACK_context.Parse(reader.Delegate(int(l)), ignoreCritical)
 				}
+			case 208:
+				if true {
+					handled = true
+					handled_MlsKeyPackage = true
+					value.MlsKeyPackage, err = context.MlsKeyPackage_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
+			case 210:
+				if true {
+					handled = true
+					handled_MlsCommit = true
+					value.MlsCommit, err = context.MlsCommit_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
+			case 212:
+				if true {
+					handled = true
+					handled_MlsWelcome = true
+					value.MlsWelcome, err = context.MlsWelcome_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
 			default:
 				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
 					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
@@ -238,6 +319,15 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	}
 	if !handled_DSKACK && err == nil {
 		value.DSKACK = nil
+	}
+	if !handled_MlsKeyPackage && err == nil {
+		value.MlsKeyPackage = nil
+	}
+	if !handled_MlsCommit && err == nil {
+		value.MlsCommit = nil
+	}
+	if !handled_MlsWelcome && err == nil {
+		value.MlsWelcome = nil
 	}
 
 	if err != nil {
@@ -1001,6 +1091,160 @@ func (value *DSKACK) Bytes() []byte {
 
 func ParseDSKACK(reader enc.WireView, ignoreCritical bool) (*DSKACK, error) {
 	context := DSKACKParsingContext{}
+	context.Init()
+	return context.Parse(reader, ignoreCritical)
+}
+
+type MlsBlobRefEncoder struct {
+	Length uint
+}
+
+type MlsBlobRefParsingContext struct {
+}
+
+func (encoder *MlsBlobRefEncoder) Init(value *MlsBlobRef) {
+
+	l := uint(0)
+	l += 3
+	l += uint(enc.TLNum(len(value.Invitee)).EncodingLength())
+	l += uint(len(value.Invitee))
+	l += 3
+	l += uint(enc.TLNum(len(value.BlobName)).EncodingLength())
+	l += uint(len(value.BlobName))
+	encoder.Length = l
+
+}
+
+func (context *MlsBlobRefParsingContext) Init() {
+
+}
+
+func (encoder *MlsBlobRefEncoder) EncodeInto(value *MlsBlobRef, buf []byte) {
+
+	pos := uint(0)
+
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1442))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.Invitee)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.Invitee)
+	pos += uint(len(value.Invitee))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1444))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.BlobName)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.BlobName)
+	pos += uint(len(value.BlobName))
+}
+
+func (encoder *MlsBlobRefEncoder) Encode(value *MlsBlobRef) enc.Wire {
+
+	wire := make(enc.Wire, 1)
+	wire[0] = make([]byte, encoder.Length)
+	buf := wire[0]
+	encoder.EncodeInto(value, buf)
+
+	return wire
+}
+
+func (context *MlsBlobRefParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*MlsBlobRef, error) {
+
+	var handled_Invitee bool = false
+	var handled_BlobName bool = false
+
+	progress := -1
+	_ = progress
+
+	value := &MlsBlobRef{}
+	var err error
+	var startPos int
+	for {
+		startPos = reader.Pos()
+		if startPos >= reader.Length() {
+			break
+		}
+		typ := enc.TLNum(0)
+		l := enc.TLNum(0)
+		typ, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+		l, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+
+		err = nil
+		if handled := false; true {
+			switch typ {
+			case 1442:
+				if true {
+					handled = true
+					handled_Invitee = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.Invitee = builder.String()
+						}
+					}
+				}
+			case 1444:
+				if true {
+					handled = true
+					handled_BlobName = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.BlobName = builder.String()
+						}
+					}
+				}
+			default:
+				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
+					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
+				}
+				handled = true
+				err = reader.Skip(int(l))
+			}
+			if err == nil && !handled {
+			}
+			if err != nil {
+				return nil, enc.ErrFailToParse{TypeNum: typ, Err: err}
+			}
+		}
+	}
+
+	startPos = reader.Pos()
+	err = nil
+
+	if !handled_Invitee && err == nil {
+		err = enc.ErrSkipRequired{Name: "Invitee", TypeNum: 1442}
+	}
+	if !handled_BlobName && err == nil {
+		err = enc.ErrSkipRequired{Name: "BlobName", TypeNum: 1444}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
+}
+
+func (value *MlsBlobRef) Encode() enc.Wire {
+	encoder := MlsBlobRefEncoder{}
+	encoder.Init(value)
+	return encoder.Encode(value)
+}
+
+func (value *MlsBlobRef) Bytes() []byte {
+	return value.Encode().Join()
+}
+
+func ParseMlsBlobRef(reader enc.WireView, ignoreCritical bool) (*MlsBlobRef, error) {
+	context := MlsBlobRefParsingContext{}
 	context.Init()
 	return context.Parse(reader, ignoreCritical)
 }
