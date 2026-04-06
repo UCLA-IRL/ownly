@@ -191,6 +191,11 @@ impl Group {
     }
 
     #[wasm_bindgen]
+    pub fn epoch(&self) -> u64 {
+        self.group.epoch().as_u64()
+    }
+
+    #[wasm_bindgen]
     pub fn add_members(&mut self, key_packages: Box<[JsValue]>) -> Result<JsValue, JsValue> {
     let kp_vec: Vec<KeyPackage> = key_packages.iter()
         .map(|v| -> Result<_, JsValue> {

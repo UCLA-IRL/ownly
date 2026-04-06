@@ -13,6 +13,11 @@ import type { SvsAloApi, WorkspaceAPI } from '@/services/ndn';
 import type { Router } from 'vue-router';
 import type { IWkspStats } from '@/services/types';
 
+type LegacyMlsFields = {
+  mlsKey?: string;
+  mlsSessionId?: string;
+};
+
 /**
  * We keep an active instance of the open workspace.
  * This always runs in the background collecting data.
@@ -44,6 +49,14 @@ export class Workspace {
     // Start connection to testbed
     await ndn.api.connect_testbed();
 
+    const legacyMls = metadata as IWkspStats & LegacyMlsFields;
+    if ((!metadata.mlsKeys || metadata.mlsKeys.length === 0) && legacyMls.mlsKey && legacyMls.mlsSessionId) {
+      metadata.mlsKeys = [{ sessionId: legacyMls.mlsSessionId, mlsKey: legacyMls.mlsKey }];
+      delete legacyMls.mlsKey;
+      delete legacyMls.mlsSessionId;
+      await _o.stats.put(metadata.name, metadata);
+    }
+
     // Set up workspace API and client
     let api: WorkspaceAPI | null = null;
     try {
@@ -59,13 +72,12 @@ export class Workspace {
       }
       await api.set_encrypt_keys(utils.fromHex(metadata.psk), utils.fromHex(metadata.dsk!));
 
-      if (metadata.mlsKey) {
-        const mlsKey = utils.fromHex(metadata.mlsKey);
-        if (mlsKey.length !== 32) {
-          throw new Error('Invalid MLS export key length != 32');
+      if (metadata.mlsKeys?.length) {
+        for (const entry of [...metadata.mlsKeys].reverse()) {
+          await api.set_encrypt_key(entry.sessionId, utils.fromHex(entry.mlsKey));
         }
-        await api.set_encrypt_key(mlsKey);
       }
+
       // Create general SVS group
       const provider = await SvsProvider.create(api, 'root');
 
@@ -76,7 +88,7 @@ export class Workspace {
       
       const shouldRequestMls =
         !metadata.owner &&
-        !metadata.mlsKey &&
+        !(metadata.mlsKeys?.length) &&
         (
           !metadata.mlsJoinRequested ||
           !metadata.mlsJoinRequestedAt ||
@@ -85,11 +97,7 @@ export class Workspace {
 
       if (shouldRequestMls) {
         try {
-          await invite.publishKeyPackageRef();
-          metadata.mlsJoinRequested = true;
-          metadata.mlsJoinRequestedAt = Date.now();
-          metadata.mlsJoinAttempts = (metadata.mlsJoinAttempts ?? 0) + 1;
-          await _o.stats.put(metadata.name, metadata);
+          await invite.requestMlsJoin();
         } catch (e) {
           // keep workspace usable; retry next startup
           console.warn('Failed to publish MLS key package ref', e);
@@ -166,6 +174,9 @@ export class Workspace {
     if (!metadata) {
       throw new Error(`Workspace not found, have you joined it? <br/> [${space}]`);
     }
+    if (metadata.revoked) {
+      throw new Error('Workspace access was revoked. Rejoin with a fresh invitation.');
+    }
 
     // Store last access time
     metadata.lastAccess = Date.now();
@@ -236,7 +247,7 @@ export class Workspace {
     psk: Uint8Array | null,
   ): Promise<string> {
     const metadata = await _o.stats.get(wksp);
-    if (metadata) throw new Error('You have already joined this workspace');
+    if (metadata && !metadata.revoked) throw new Error('You have already joined this workspace');
 
     // Generate or validate PSK
     if (create) {
@@ -263,6 +274,7 @@ export class Workspace {
       owner: isOwner,
       ignore: ignore,
       pendingSetup: create ? true : undefined,
+      revoked: undefined,
       psk: utils.toHex(psk),
       dsk: dsk ? utils.toHex(dsk) : null,
     });

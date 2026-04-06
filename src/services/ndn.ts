@@ -58,7 +58,7 @@ export interface WorkspaceAPI {
 
   /** Set the encryption keys */
   set_encrypt_keys(psk: Uint8Array, dsk: Uint8Array): Promise<void>;
-  set_encrypt_key(key: Uint8Array): Promise<void>;
+  set_encrypt_key(sessionId: string, key: Uint8Array): Promise<void>;
 
   /** Start the workspace */
   start(): Promise<void>;
@@ -87,6 +87,7 @@ export interface WorkspaceAPI {
 export type MlsRefPub = {
   invitee: string;
   blob_name: string;
+  session_id: string;
   publisher: string;
   boot_time: number;
   seq_num: number;
@@ -118,11 +119,11 @@ export interface SvsAloApi {
   pub_dsk_ack(key: Uint8Array): Promise<void>;
 
   /** Publish MLS key package for a new member */
-  pub_mls_kp_ref(invitee: string, blobName: string): Promise<string>;
+  pub_mls_kp_ref(invitee: string, blobName: string, sessionId: string): Promise<string>;
   /** Publish MLS welcome message for a new member */
-  pub_mls_welcome_ref(invitee: string, blobName: string): Promise<string>;
+  pub_mls_welcome_ref(invitee: string, blobName: string, sessionId: string): Promise<string>;
   /** Publish MLS commit message for a group change */
-  pub_mls_commit_ref(invitee: string, blobName: string): Promise<string>;
+  pub_mls_commit_ref(invitee: string, blobName: string, sessionId: string): Promise<string>;
 
   /** Set SVS ALO subscription callbacks */
   subscribe(params: {

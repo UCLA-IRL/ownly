@@ -1,3 +1,9 @@
+export type IMlsKey = {
+  /** MLS key associated with a session ID */
+  sessionId: string;
+  mlsKey: string;
+}
+
 export type IWkspStats = {
   /** Readable label for the space */
   label: string;
@@ -9,6 +15,8 @@ export type IWkspStats = {
   ignore: boolean;
   /** Workspace is pending initial setup */
   pendingSetup?: boolean;
+  /** Local access was revoked; require a fresh invitation to rejoin */
+  revoked?: boolean;
   /** Last access time */
   lastAccess?: number;
 
@@ -18,13 +26,12 @@ export type IWkspStats = {
   dsk: string | null;
   /** DSK request key */
   dskExch?: string;
-  /** MLS-lite shared key */
-  mlsKey?: string;
   /** Invitee already published MLS key package request */
   mlsJoinRequested?: boolean;
   mlsJoinRequestedAt?: number;
   mlsJoinAttempts?: number;
   mlsOwnerBootstrapped?: boolean;
+  mlsKeys?: IMlsKey[];
 };
 
 export type IChatMessage = {
@@ -137,4 +144,3 @@ export interface IAgentChannel {
   /** Reference to the agent card by its URL (used as ID) */
   agentId: string;
 }
-

@@ -145,6 +145,13 @@ export class Group {
         }
     }
     /**
+     * @returns {bigint}
+     */
+    epoch() {
+        const ret = wasm.group_epoch(this.__wbg_ptr);
+        return BigInt.asUintN(64, ret);
+    }
+    /**
      * @param {string} label
      * @param {Uint8Array} context
      * @param {number} len

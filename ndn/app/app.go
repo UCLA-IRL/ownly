@@ -17,6 +17,11 @@ import (
 	jsutil "github.com/named-data/ndnd/std/utils/js"
 )
 
+type SessionCipher struct {
+	SessionId string
+	AES	cipher.Block
+}
+
 type App struct {
 	face     ndn.Face
 	engine   ndn.Engine
@@ -36,6 +41,11 @@ type App struct {
 
 	// Pending DSK requests -> cancel function
 	dskReqs map[string]*time.Timer
+
+	// Session ID
+	sessionId string
+	// 5 session ciphers for decryption
+	keyRing []SessionCipher
 }
 
 var _ndnd_store_js = js.Global().Get("_ndnd_store_js")

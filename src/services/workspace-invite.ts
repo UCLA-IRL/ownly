@@ -6,17 +6,24 @@ import type { WorkspaceAPI, MlsRefPub } from '@/services/ndn';
 import type { SvsProvider } from '@/services/svs-provider';
 import type { IProfile, IWkspStats } from '@/services/types';
 import  { OpenMlsLiteClient, OpenMlsLiteGroup } from '@/services/openmls-lite';
+import { GlobalBus } from '@/services/event-bus';
 
 const MLS_STORAGE_STATE_KEY = 'mls/storage/v1';
 const MLS_GROUP_ID_STATE_KEY = 'mls/group-id/v1';
+const MLS_RESET_SENTINEL = '__mls_reset__';
+const MLS_PREJOIN_SESSION_ID = 'prejoin';
+const MLS_COMMIT_BROADCAST = '__mls_commit_broadcast__';
+type LegacyMlsFields = { mlsKey?: string; mlsSessionId?: string };
+type MlsSessionInfo = { groupIdHex: string; epoch: bigint };
 
 export class WorkspaceInviteManager {
   private readonly inviteeProfiles: Y.Map<IProfile>;
   private mlsClient: OpenMlsLiteClient | null = null;
   private mlsGroup: OpenMlsLiteGroup | null = null;
   private mlsInitPromise: Promise<void> | null = null;
-  
-  // For testing: temp owner-side kb table
+  private pendingCommitRefs: MlsRefPub[] = [];
+
+  // Deduplicate MLS publications delivered through live and snapshot paths.
   private readonly seenMlsPub: Set<string> = new Set();
 
   private constructor(
@@ -81,6 +88,12 @@ export class WorkspaceInviteManager {
     return out;
   }
 
+  private orderedPendingCommits(): MlsRefPub[] {
+    return [...this.pendingCommitRefs].sort((a, b) =>
+      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
+    );
+  }
+
   /** 
    * get MLS group, throw error if not initialized
    */
@@ -101,23 +114,69 @@ export class WorkspaceInviteManager {
     return this.mlsClient;
   }
 
+  private currentMlsSessionId(): string {
+    const group = this.checkMlsInitialized();
+    const groupIdHex = utils.toHex(group.groupIdBytes());
+    const epoch = group.epoch();
+    if (epoch < 0n) {
+      throw new Error(`Invalid MLS epoch for session ID: ${epoch}`);
+    }
+    return `${groupIdHex}:${epoch.toString()}`;
+  }
+
+  private currentMlsSessionInfo(): MlsSessionInfo {
+    const group = this.checkMlsInitialized();
+    const groupIdHex = utils.toHex(group.groupIdBytes());
+    const epoch = group.epoch();
+    if (epoch < 0n) {
+      throw new Error(`Invalid MLS epoch for session ID: ${epoch}`);
+    }
+    return { groupIdHex, epoch };
+  }
+
+  private parseMlsSessionId(sessionId: string): MlsSessionInfo | null {
+    if (!sessionId || sessionId === MLS_PREJOIN_SESSION_ID) return null;
+    const idx = sessionId.lastIndexOf(':');
+    if (idx <= 0 || idx === sessionId.length - 1) {
+      throw new Error(`Invalid MLS session ID: ${sessionId}`);
+    }
+    const groupIdHex = sessionId.slice(0, idx);
+    const epochStr = sessionId.slice(idx + 1);
+    const epoch = BigInt(epochStr);
+    if (epoch < 0n) {
+      throw new Error(`Invalid MLS epoch in session ID: ${sessionId}`);
+    }
+    return { groupIdHex, epoch };
+  }
+
   /**
-   * Rotate the workspace shared secret after memebership changes
+   * Install the workspace shared secret for the current MLS group state.
    */
-  private async rotateWorkspaceMlsKey(): Promise<Uint8Array> {
-    if (!this.mlsGroup) {
-      throw new Error('MLS group is not initialized');
+  private async rotateWorkspaceMlsKey(expectedSessionId?: string): Promise<Uint8Array> {
+    const group = this.checkMlsInitialized();
+    const sessionId = this.currentMlsSessionId();
+    if (expectedSessionId != null && expectedSessionId !== sessionId) {
+      throw new Error(`MLS session mismatch: expected ${expectedSessionId}, got ${sessionId}`);
     }
 
-    const key = this.mlsGroup.exportWorkspaceSecret();
+    const key = group.exportWorkspaceSecret();
 
     if (!(key instanceof Uint8Array) || key.length !== 32) {
       throw new Error(`Invalid MLS export key length: ${key?.length ?? 'unknown'}`);
     }
-    await this.api.set_encrypt_key(key);
+
+    await this.api.set_encrypt_key(sessionId, key);
 
     const hex = utils.toHex(key);
-    this.wsmeta.mlsKey = hex;
+
+    const recent = [
+      { sessionId, mlsKey: hex },
+      ...(this.wsmeta.mlsKeys ?? []).filter((x) => x.sessionId !== sessionId),
+    ].slice(0, 5);
+
+    this.wsmeta.mlsKeys = recent;
+    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsKey;
+    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsSessionId;
     this.wsmeta.mlsJoinRequested = false;
     await _o.stats.put(this.wsmeta.name, this.wsmeta);
     await this.persistMlsState();
@@ -132,28 +191,146 @@ export class WorkspaceInviteManager {
     await this.provider.statePut(MLS_GROUP_ID_STATE_KEY, groupId);
   }
 
+  private async clearPersistedMlsState(): Promise<void> {
+    await this.provider.statePut(MLS_STORAGE_STATE_KEY, new Uint8Array());
+    await this.provider.statePut(MLS_GROUP_ID_STATE_KEY, new Uint8Array());
+  }
+
+  private isPersistedStatePresent(state: Uint8Array | undefined): boolean {
+    return !!state && state.byteLength > 0;
+  }
+
+  private isResetPub(pub: MlsRefPub): boolean {
+    return pub.invitee === MLS_RESET_SENTINEL;
+  }
+
+  private async restoreLegacyWorkspaceKey(): Promise<void> {
+    if (!this.wsmeta.psk || !this.wsmeta.dsk) {
+      throw new Error('Cannot reset MLS state without legacy PSK+DSK fallback');
+    }
+    await this.api.set_encrypt_keys(
+      utils.fromHex(this.wsmeta.psk),
+      utils.fromHex(this.wsmeta.dsk),
+    );
+  }
+
+  private async resetLocalMlsState(source: string): Promise<void> {
+    console.warn(`Resetting MLS state: ${source}`);
+
+    this.mlsGroup?.free();
+    this.mlsGroup = null;
+    this.mlsClient?.free();
+    this.mlsClient = null;
+    this.pendingCommitRefs = [];
+
+    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsKey;
+    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsSessionId;
+    this.wsmeta.mlsJoinRequested = false;
+    this.wsmeta.mlsJoinRequestedAt = undefined;
+    this.wsmeta.mlsJoinAttempts = undefined;
+    this.wsmeta.mlsOwnerBootstrapped = false;
+    this.wsmeta.mlsKeys = undefined;
+
+    await this.clearPersistedMlsState();
+    await this.restoreLegacyWorkspaceKey();
+    await _o.stats.put(this.wsmeta.name, this.wsmeta);
+
+    if (!this.wsmeta.owner) {
+      try {
+        await this.requestMlsJoin();
+      } catch (e) {
+        console.warn('Failed to republish MLS key package after reset', e);
+      }
+    }
+  }
+
+  private async revokeLocalWorkspaceAccess(source: string): Promise<void> {
+    console.warn(`Revoking workspace access: ${source}`);
+
+    this.mlsGroup?.free();
+    this.mlsGroup = null;
+    this.mlsClient?.free();
+    this.mlsClient = null;
+    this.pendingCommitRefs = [];
+
+    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsKey;
+    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsSessionId;
+    this.wsmeta.mlsJoinRequested = false;
+    this.wsmeta.mlsJoinRequestedAt = undefined;
+    this.wsmeta.mlsJoinAttempts = undefined;
+    this.wsmeta.mlsOwnerBootstrapped = false;
+    this.wsmeta.mlsKeys = undefined;
+    this.wsmeta.dsk = null;
+    this.wsmeta.dskExch = undefined;
+    this.wsmeta.revoked = true;
+
+    await this.clearPersistedMlsState();
+    await _o.stats.put(this.wsmeta.name, this.wsmeta);
+    GlobalBus.emit('wksp-error', new Error('You were removed from this workspace. Rejoin with a fresh invitation to regain access.'));
+  }
+
   private async restoreMlsStateIfAvailable(): Promise<boolean> {
     const [snapshot, groupId] = await Promise.all([
       this.provider.stateGet(MLS_STORAGE_STATE_KEY),
       this.provider.stateGet(MLS_GROUP_ID_STATE_KEY),
     ]);
 
-    if (!snapshot && !groupId) return false;
-    if (!snapshot || !groupId) {
+    const hasSnapshot = this.isPersistedStatePresent(snapshot);
+    const hasGroupId = this.isPersistedStatePresent(groupId);
+
+    if (!hasSnapshot && !hasGroupId) return false;
+    if (!hasSnapshot || !hasGroupId) {
       throw new Error('Incomplete MLS persisted state');
     }
 
     const client = await this.getMlsClient();
-    client.importStorageSnapshot(snapshot);
+    client.importStorageSnapshot(snapshot!);
     this.mlsGroup?.free();
-    this.mlsGroup = client.loadGroup(groupId);
+    this.mlsGroup = client.loadGroup(groupId!);
+
     await this.rotateWorkspaceMlsKey();
+    await this.drainPendingCommitRefs();
 
     if (this.wsmeta.owner && !this.wsmeta.mlsOwnerBootstrapped) {
       this.wsmeta.mlsOwnerBootstrapped = true;
       await _o.stats.put(this.wsmeta.name, this.wsmeta);
     }
     return true;
+  }
+
+  private async drainPendingCommitRefs(): Promise<void> {
+    if (!this.mlsGroup || this.pendingCommitRefs.length === 0) return;
+
+    const pending = this.orderedPendingCommits();
+    const stillPending: MlsRefPub[] = [];
+
+    for (const pub of pending) {
+      if (pub.invitee === this.api.name) continue;
+      try {
+        const current = this.currentMlsSessionInfo();
+        const target = this.parseMlsSessionId(pub.session_id);
+        if (!target) {
+          continue;
+        }
+        if (target.groupIdHex !== current.groupIdHex) {
+          console.warn('Dropping queued MLS commit for different group instance', pub);
+          continue;
+        }
+        if (target.epoch <= current.epoch) {
+          continue; // stale commit from before we joined/applied newer epochs
+        }
+        if (target.epoch > current.epoch + 1n) {
+          stillPending.push(pub);
+          continue;
+        }
+        const commit = (await this.provider.consumeBlob(pub.blob_name)).data;
+        await this.applyMlsCommit(commit, pub.session_id);
+      } catch (e) {
+        console.warn('Failed to apply queued MLS commit ref', pub, e);
+      }
+    }
+
+    this.pendingCommitRefs = stillPending;
   }
 
   private async restoreMlsStateOnStartup(): Promise<void> {
@@ -181,7 +358,7 @@ export class WorkspaceInviteManager {
         throw new Error('Only workspace owner can use owner MLS group');
       }
       if (!this.mlsGroup) {
-        throw new Error('Owner MLS group not initialized. Call bootstrapOwnerMlsIfNeeded() first.');
+        throw new Error('Owner MLS group not initialized. Call bootstrapOwnerMls() first.');
       }
       return this.mlsGroup;
   }
@@ -191,11 +368,12 @@ export class WorkspaceInviteManager {
    * 
    * @param welcome The welcome message to join from
    */
-  public async joinMlsFromWelcome(welcome: Uint8Array) : Promise<void> {
+  public async joinMlsFromWelcome(welcome: Uint8Array, sessionId: string) : Promise<void> {
     const client = await this.getMlsClient();
     this.mlsGroup?.free();
     this.mlsGroup = client.joinFromWelcome(welcome); // welcome-only first
-    await this.rotateWorkspaceMlsKey();
+    await this.rotateWorkspaceMlsKey(sessionId);
+    await this.drainPendingCommitRefs();
   }
 
   /**
@@ -203,14 +381,17 @@ export class WorkspaceInviteManager {
    * 
    * @param commit The commit to apply
    */
-  public async applyMlsCommit(commit: Uint8Array) : Promise<void> {
+  public async applyMlsCommit(commit: Uint8Array, sessionId: string) : Promise<void> {
     const group = this.checkMlsInitialized();
     group.applyCommit(commit);
-    await this.rotateWorkspaceMlsKey();
+    await this.rotateWorkspaceMlsKey(sessionId);
   }
 
   private async onMlsKpRefs(pubs: MlsRefPub[]): Promise<void> {
     if (!this.wsmeta.owner) return;
+    if (!this.mlsGroup && !this.wsmeta.mlsOwnerBootstrapped) {
+      await this.bootstrapOwnerMls();
+    }
     console.log(`Received ${pubs.length} MLS KP refs`);
 
     for (const pub of this.uniqueOrdered(pubs)) {
@@ -221,31 +402,63 @@ export class WorkspaceInviteManager {
         continue;
       }
       const kp = (await this.provider.consumeBlob(pub.blob_name)).data;
-      const { commit, welcome } = await this.addMemberFromKeyPackage(pub.invitee, kp);
+      const { commit, welcome, sessionId } = await this.addMemberFromKeyPackage(pub.invitee, kp);
 
       const inviteeKey = utils.escapeUrlName(pub.invitee);
       const commitBlob = await this.provider.publishBlob(`mls-commit-${inviteeKey}`, commit);
       const welcomeBlob = await this.provider.publishBlob(`mls-welcome-${inviteeKey}`, welcome);
 
-      await this.provider.svs.pub_mls_commit_ref(pub.invitee, commitBlob);
-      await this.provider.svs.pub_mls_welcome_ref(pub.invitee, welcomeBlob);
+      await this.provider.svs.pub_mls_commit_ref(MLS_COMMIT_BROADCAST, commitBlob, sessionId);
+      await this.provider.svs.pub_mls_welcome_ref(pub.invitee, welcomeBlob, sessionId);
     }
   }
 
   private async onMlsWelcomeRefs(pubs: MlsRefPub[]): Promise<void> {
     for (const pub of this.uniqueOrdered(pubs)) {
       if (pub.invitee !== this.api.name) continue; // only target invitee handles welcome
+      console.log('Processing MLS welcome ref', pub);
       const welcome = (await this.provider.consumeBlob(pub.blob_name)).data;
-      await this.joinMlsFromWelcome(welcome);
+      await this.joinMlsFromWelcome(welcome, pub.session_id);
     }
   }
 
   private async onMlsCommitRefs(pubs: MlsRefPub[]): Promise<void> {
     for (const pub of this.uniqueOrdered(pubs)) {
+      if (this.isResetPub(pub)) {
+        if (this.wsmeta.owner && pub.publisher === this.api.name) continue;
+        await this.resetLocalMlsState(`remote group reset from ${pub.publisher}`);
+        continue;
+      }
       if (this.wsmeta.owner) continue;            // owner already merged pending
-      if (pub.invitee === this.api.name) continue; // invitee uses welcome path
+      if (pub.invitee === this.api.name) {
+        if (this.mlsGroup || this.wsmeta.mlsKeys?.length) {
+          await this.revokeLocalWorkspaceAccess(`removed from MLS group by ${pub.publisher}`);
+        }
+        continue; // self-targeted commit refs are member removals
+      }
+      if (!this.mlsGroup) {
+        this.pendingCommitRefs.push(pub);
+        continue;
+      }
+      const current = this.currentMlsSessionInfo();
+      const target = this.parseMlsSessionId(pub.session_id);
+      if (!target) {
+        continue;
+      }
+      if (target.groupIdHex !== current.groupIdHex) {
+        console.warn('Ignoring MLS commit for different group instance', pub);
+        continue;
+      }
+      if (target.epoch <= current.epoch) {
+        continue;
+      }
+      if (target.epoch > current.epoch + 1n) {
+        this.pendingCommitRefs.push(pub);
+        continue;
+      }
       const commit = (await this.provider.consumeBlob(pub.blob_name)).data;
-      await this.applyMlsCommit(commit);
+      await this.applyMlsCommit(commit, pub.session_id);
+      await this.drainPendingCommitRefs();
     }
   }
 
@@ -255,10 +468,32 @@ export class WorkspaceInviteManager {
     const inviteeKey = utils.escapeUrlName(this.api.name);
     console.log('Publishing MLS key package ref', { invitee: `mls-kp-${inviteeKey}`, blobSize: kp.byteLength });
     const blob = await this.provider.publishBlob(`mls-kp-${inviteeKey}`, kp);
-    await this.provider.svs.pub_mls_kp_ref(this.api.name, blob);
+    await this.provider.svs.pub_mls_kp_ref(this.api.name, blob, MLS_PREJOIN_SESSION_ID);
   }
 
-  public async addMemberFromKeyPackage( invitee: string, kp: Uint8Array ): Promise<{ commit: Uint8Array; welcome: Uint8Array }> {
+  public async requestMlsJoin(): Promise<void> {
+    if (this.wsmeta.owner) {
+      throw new Error('Owner does not request MLS join via key package');
+    }
+
+    try {
+      await this.publishKeyPackageRef();
+      this.wsmeta.mlsJoinRequested = true;
+      this.wsmeta.mlsJoinRequestedAt = Date.now();
+      this.wsmeta.mlsJoinAttempts = (this.wsmeta.mlsJoinAttempts ?? 0) + 1;
+    } catch (e) {
+      this.wsmeta.mlsJoinRequested = false;
+      await _o.stats.put(this.wsmeta.name, this.wsmeta);
+      throw e;
+    }
+
+    await _o.stats.put(this.wsmeta.name, this.wsmeta);
+  }
+
+  public async addMemberFromKeyPackage(
+    invitee: string,
+    kp: Uint8Array,
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; sessionId: string }> {
     if (!this.wsmeta.owner) {
       throw new Error('Only workspace owner can add members');
     }
@@ -278,9 +513,10 @@ export class WorkspaceInviteManager {
     // Owner finalizes own pending commit.
     group.mergePendingCommit();
 
-    await this.rotateWorkspaceMlsKey();
+    const sessionId = this.currentMlsSessionId();
+    await this.rotateWorkspaceMlsKey(sessionId);
 
-    return { commit, welcome };
+    return { commit, welcome, sessionId };
   }
 
   public async removeMember(name: string): Promise<void> {
@@ -295,17 +531,34 @@ export class WorkspaceInviteManager {
 
     const { commit } = group.removeMembers([idx]);
     group.mergePendingCommit();
-    await this.rotateWorkspaceMlsKey(); // includes persist
+
+    const sessionId = this.currentMlsSessionId();
+    await this.rotateWorkspaceMlsKey(sessionId);
 
     // publish commit ref so other members apply
     const blob = await this.provider.publishBlob(
       `mls-commit-rm-${utils.escapeUrlName(name)}`,
       commit,
     );
-    await this.provider.svs.pub_mls_commit_ref(name, blob);
+    await this.provider.svs.pub_mls_commit_ref(name, blob, sessionId);
 
     // remove from authorization map
     this.inviteeProfiles.delete(name);
+  }
+
+  public async resetGroupMlsState(): Promise<void> {
+    if (!this.wsmeta.owner) {
+      throw new Error('Only workspace owner can reset MLS state for the group');
+    }
+
+    await this.resetLocalMlsState('owner-triggered group reset');
+
+    const resetBlob = await this.provider.publishBlob(
+      `mls-reset-${Date.now()}`,
+      new TextEncoder().encode('reset'),
+    );
+    await this.provider.svs.pub_mls_commit_ref(MLS_RESET_SENTINEL, resetBlob, MLS_PREJOIN_SESSION_ID);
+    await this.bootstrapOwnerMls();
   }
 
 

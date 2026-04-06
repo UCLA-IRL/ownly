@@ -3,7 +3,6 @@
 package app
 
 import (
-	"crypto/aes"
 	"crypto/ecdh"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -258,6 +257,8 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	a.psk = nil
 	a.dsk = nil
 	a.aes = nil
+	a.sessionId = ""
+	a.keyRing = nil
 
 	// If owner, watch for access request interests
 	isOwner, err := a.IsWorkspaceOwner(groupStr)
@@ -299,27 +300,30 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if err != nil {
 				return nil, err
 			}
-			a.aes, err = aes.NewCipher(symKey)
-			if err != nil {
+			// set Session ID to a static number for legacy path
+			a.sessionId = LegacySessionID
+			if err := a.installEncryptKey(a.sessionId, symKey); err != nil {
 				return nil, err
 			}
+
 			a.ivb = userKey.KeyName().Hash()
 
 			return nil, nil
 		}),
 
-		// set_encrypt_key(key: Uint8Array): Promise<void>;
+		// set_encrypt_key(sessionId: string, key: Uint8Array): Promise<void>;
 		"set_encrypt_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			key := jsutil.JsArrayToSlice(p[0])
-			if len(key) == 0 {
+			sessionID := p[0].String()
+			key := jsutil.JsArrayToSlice(p[1])
+			if sessionID == "" || len(key) == 0 {
 				return nil, fmt.Errorf("invalid key")
 			}
 
-			a.aes, err = aes.NewCipher(key)
-			if err != nil {
+			if err := a.installEncryptKey(sessionID, key); err != nil {
 				return nil, err
 			}
 			a.ivb = userKey.KeyName().Hash()
+			a.sessionId = sessionID
 			return nil, nil
 		}),
 
@@ -708,6 +712,7 @@ func (a *App) SvsAloJs(
 		"pub_mls_kp_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			invitee := p[0].String()
 			blobName := p[1].String()
+			sessionId := p[2].String()
 			log.Info(nil, "MLS KP publish request", "invitee", invitee, "blob", blobName)
 			if invitee == "" || blobName == "" { return nil, fmt.Errorf("invalid invitee or blob name") }
 
@@ -715,6 +720,7 @@ func (a *App) SvsAloJs(
 				MlsKeyPackage: &tlv.MlsBlobRef{
 					Invitee: invitee,
 					BlobName: blobName,
+					SessionId: sessionId,
 				},
 			}
 			name, state, err := alo.Publish(pub.Encode())
@@ -732,12 +738,14 @@ func (a *App) SvsAloJs(
 		"pub_mls_welcome_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			invitee := p[0].String()
 			blobName := p[1].String()
-			if invitee == "" || blobName == "" { return nil, fmt.Errorf("invalid invitee or blob name") }
+			sessionId := p[2].String()
+			if invitee == "" || blobName == "" || sessionId == "" { return nil, fmt.Errorf("invalid invitee, blob name, or session ID") }
 
 			pub := &tlv.Message{
 				MlsWelcome: &tlv.MlsBlobRef{
 					Invitee: invitee,
 					BlobName: blobName,
+					SessionId: sessionId,
 				},
 			}
 			name, state, err := alo.Publish(pub.Encode())
@@ -755,12 +763,14 @@ func (a *App) SvsAloJs(
 		"pub_mls_commit_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			invitee := p[0].String()
 			blobName := p[1].String()
-			if invitee == "" || blobName == "" { return nil, fmt.Errorf("invalid invitee or blob name") }
+			sessionId := p[2].String()
+			if invitee == "" || blobName == "" || sessionId == "" { return nil, fmt.Errorf("invalid invitee, blob name, or session ID") }
 
 			pub := &tlv.Message{
 				MlsCommit: &tlv.MlsBlobRef{
 					Invitee: invitee,
 					BlobName: blobName,
+					SessionId: sessionId,
 				},
 			}
 			name, state, err := alo.Publish(pub.Encode())
@@ -854,6 +864,7 @@ func (a *App) SvsAloJs(
 						mlsKpRefs.Call("push", js.ValueOf(map[string]any{
 							"invitee":   pmsg.MlsKeyPackage.Invitee,
 							"blob_name": pmsg.MlsKeyPackage.BlobName,
+							"session_id": pmsg.MlsKeyPackage.SessionId,
 							"publisher": pub.Publisher.String(),
 							"boot_time": pub.BootTime,
 							"seq_num":   pub.SeqNum,
@@ -864,6 +875,7 @@ func (a *App) SvsAloJs(
 						mlsWelcomeRefs.Call("push", js.ValueOf(map[string]any{
 							"invitee":   pmsg.MlsWelcome.Invitee,
 							"blob_name": pmsg.MlsWelcome.BlobName,
+							"session_id": pmsg.MlsWelcome.SessionId,
 							"publisher": pub.Publisher.String(),
 							"boot_time": pub.BootTime,
 							"seq_num":   pub.SeqNum,
@@ -874,6 +886,7 @@ func (a *App) SvsAloJs(
 						mlsCommitRefs.Call("push", js.ValueOf(map[string]any{
 							"invitee":   pmsg.MlsCommit.Invitee,
 							"blob_name": pmsg.MlsCommit.BlobName,
+							"session_id": pmsg.MlsCommit.SessionId,
 							"publisher": pub.Publisher.String(),
 							"boot_time": pub.BootTime,
 							"seq_num":   pub.SeqNum,

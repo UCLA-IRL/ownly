@@ -363,6 +363,9 @@ type AeadBlockParsingContext struct {
 func (encoder *AeadBlockEncoder) Init(value *AeadBlock) {
 
 	l := uint(0)
+	l += 1
+	l += uint(enc.TLNum(len(value.SessionID)).EncodingLength())
+	l += uint(len(value.SessionID))
 	if value.IV != nil {
 		l += 1
 		l += uint(enc.TLNum(len(value.IV)).EncodingLength())
@@ -385,6 +388,11 @@ func (encoder *AeadBlockEncoder) EncodeInto(value *AeadBlock, buf []byte) {
 
 	pos := uint(0)
 
+	buf[pos] = byte(199)
+	pos += 1
+	pos += uint(enc.TLNum(len(value.SessionID)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.SessionID)
+	pos += uint(len(value.SessionID))
 	if value.IV != nil {
 		buf[pos] = byte(200)
 		pos += 1
@@ -413,6 +421,7 @@ func (encoder *AeadBlockEncoder) Encode(value *AeadBlock) enc.Wire {
 
 func (context *AeadBlockParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*AeadBlock, error) {
 
+	var handled_SessionID bool = false
 	var handled_IV bool = false
 	var handled_Ciphertext bool = false
 
@@ -441,6 +450,18 @@ func (context *AeadBlockParsingContext) Parse(reader enc.WireView, ignoreCritica
 		err = nil
 		if handled := false; true {
 			switch typ {
+			case 199:
+				if true {
+					handled = true
+					handled_SessionID = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.SessionID = builder.String()
+						}
+					}
+				}
 			case 200:
 				if true {
 					handled = true
@@ -473,6 +494,9 @@ func (context *AeadBlockParsingContext) Parse(reader enc.WireView, ignoreCritica
 	startPos = reader.Pos()
 	err = nil
 
+	if !handled_SessionID && err == nil {
+		err = enc.ErrSkipRequired{Name: "SessionID", TypeNum: 199}
+	}
 	if !handled_IV && err == nil {
 		value.IV = nil
 	}
@@ -1111,6 +1135,9 @@ func (encoder *MlsBlobRefEncoder) Init(value *MlsBlobRef) {
 	l += 3
 	l += uint(enc.TLNum(len(value.BlobName)).EncodingLength())
 	l += uint(len(value.BlobName))
+	l += 3
+	l += uint(enc.TLNum(len(value.SessionId)).EncodingLength())
+	l += uint(len(value.SessionId))
 	encoder.Length = l
 
 }
@@ -1135,6 +1162,12 @@ func (encoder *MlsBlobRefEncoder) EncodeInto(value *MlsBlobRef, buf []byte) {
 	pos += uint(enc.TLNum(len(value.BlobName)).EncodeInto(buf[pos:]))
 	copy(buf[pos:], value.BlobName)
 	pos += uint(len(value.BlobName))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1446))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.SessionId)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.SessionId)
+	pos += uint(len(value.SessionId))
 }
 
 func (encoder *MlsBlobRefEncoder) Encode(value *MlsBlobRef) enc.Wire {
@@ -1151,6 +1184,7 @@ func (context *MlsBlobRefParsingContext) Parse(reader enc.WireView, ignoreCritic
 
 	var handled_Invitee bool = false
 	var handled_BlobName bool = false
+	var handled_SessionId bool = false
 
 	progress := -1
 	_ = progress
@@ -1201,6 +1235,18 @@ func (context *MlsBlobRefParsingContext) Parse(reader enc.WireView, ignoreCritic
 						}
 					}
 				}
+			case 1446:
+				if true {
+					handled = true
+					handled_SessionId = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.SessionId = builder.String()
+						}
+					}
+				}
 			default:
 				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
 					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
@@ -1224,6 +1270,9 @@ func (context *MlsBlobRefParsingContext) Parse(reader enc.WireView, ignoreCritic
 	}
 	if !handled_BlobName && err == nil {
 		err = enc.ErrSkipRequired{Name: "BlobName", TypeNum: 1444}
+	}
+	if !handled_SessionId && err == nil {
+		err = enc.ErrSkipRequired{Name: "SessionId", TypeNum: 1446}
 	}
 
 	if err != nil {

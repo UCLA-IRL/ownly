@@ -21,6 +21,7 @@ type WasmGroup = {
     my_index(): number;
     member_index_by_identity(identity: Uint8Array): number | undefined;
     group_id_bytes(): Uint8Array;
+    epoch(): bigint;
     export_secret(label: string, context: Uint8Array, len: number): Uint8Array;
     free?: () => void;
 };
@@ -102,6 +103,10 @@ export class OpenMlsLiteGroup {
 
     groupIdBytes(): Uint8Array {
         return this.inner.group_id_bytes();
+    }
+
+    epoch(): bigint {
+        return this.inner.epoch();
     }
 
     mergePendingCommit(): void {

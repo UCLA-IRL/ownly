@@ -19,6 +19,7 @@ export class Group {
     [Symbol.dispose](): void;
     add_members(key_packages: any[]): any;
     apply_commit(commit_bytes: Uint8Array): void;
+    epoch(): bigint;
     export_secret(label: string, context: Uint8Array, len: number): Uint8Array;
     group_id_bytes(): Uint8Array;
     member_index_by_identity(identity: Uint8Array): number | undefined;
@@ -42,6 +43,7 @@ export interface InitOutput {
     readonly client_new: (a: number, b: number) => [number, number, number];
     readonly group_add_members: (a: number, b: number, c: number) => [number, number, number];
     readonly group_apply_commit: (a: number, b: number, c: number) => [number, number];
+    readonly group_epoch: (a: number) => bigint;
     readonly group_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly group_group_id_bytes: (a: number) => [number, number];
     readonly group_member_index_by_identity: (a: number, b: number, c: number) => number;
