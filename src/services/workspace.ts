@@ -109,6 +109,9 @@ export class Workspace {
 
       // Create workspace object first (without agent)
       const workspace = new Workspace(metadata, api, provider, chat, proj, invite, null);
+      invite.setOnOwnerSessionAdvanced(async () => {
+        await workspace.republishEncryptedState();
+      });
 
       // Then create agent with workspace reference
       const agent = await WorkspaceAgentManager.create(api, provider, workspace);
@@ -154,6 +157,16 @@ export class Workspace {
    */
   public async getMembers(): Promise<string[]> {
     return await this.provider.svs.names();
+  }
+
+  /**
+   * Republish the currently encrypted Yjs state under the active workspace key.
+   * This is used after owner-driven MLS session changes so late or idle
+   * members can recover the current encrypted state under the new session.
+   */
+  public async republishEncryptedState(): Promise<void> {
+    await this.provider.republishEncryptedState();
+    await this.proj.republishEncryptedState();
   }
 
   /**

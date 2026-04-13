@@ -195,6 +195,34 @@ export class SvsProvider {
   }
 
   /**
+   * Export the full current state of a Yjs document as a single merged update.
+   *
+   * @param uuid UUID of the document
+   */
+  public async exportDocSnapshot(uuid: string): Promise<Uint8Array> {
+    const doc = new Y.Doc();
+    try {
+      await this.readInto(doc, uuid);
+      return Y.encodeStateAsUpdateV2(doc);
+    } finally {
+      doc.destroy();
+    }
+  }
+
+  /**
+   * Republish the merged encrypted state of every persisted Yjs document in this
+   * SVS group.
+   */
+  public async republishEncryptedState(): Promise<void> {
+    const uuids = await this.db.updateListUUID();
+    for (const uuid of uuids) {
+      const merged = await this.exportDocSnapshot(uuid);
+      if (!(merged instanceof Uint8Array) || merged.byteLength === 0) continue;
+      await this.svs.pub_yjs_delta(uuid, merged);
+    }
+  }
+
+  /**
    * Get a Yjs document from the project.
    *
    *  @param uuid UUID of the document

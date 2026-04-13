@@ -86,6 +86,28 @@ export class WorkspaceProjManager {
     this.instances.set(puuid, proj);
     return proj;
   }
+
+  /**
+   * Republish the encrypted Yjs state for every project provider.
+   * Existing project instances are reused; unopened projects are loaded
+   * temporarily for the republish and then torn down again.
+   */
+  public async republishEncryptedState(): Promise<void> {
+    for (const meta of this.getProjects()) {
+      const existing = this.instances.get(meta.uuid);
+      if (existing) {
+        await existing.republishEncryptedState();
+        continue;
+      }
+
+      const temp = await WorkspaceProj.create(meta.uuid, meta.name, this.wksp, this);
+      try {
+        await temp.republishEncryptedState();
+      } finally {
+        await temp.destroy();
+      }
+    }
+  }
 }
 
 /**
@@ -135,6 +157,13 @@ export class WorkspaceProj {
   public async destroy() {
     this.root.destroy();
     await this.provider.destroy();
+  }
+
+  /**
+   * Republish the encrypted Yjs state for this project provider.
+   */
+  public async republishEncryptedState(): Promise<void> {
+    await this.provider.republishEncryptedState();
   }
 
   /** Make this the active project */

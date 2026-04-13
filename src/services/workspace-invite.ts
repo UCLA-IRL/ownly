@@ -22,6 +22,7 @@ export class WorkspaceInviteManager {
   private mlsGroup: OpenMlsLiteGroup | null = null;
   private mlsInitPromise: Promise<void> | null = null;
   private pendingCommitRefs: MlsRefPub[] = [];
+  private onOwnerSessionAdvanced: ((sessionId: string) => Promise<void>) | null = null;
 
   // Deduplicate MLS publications delivered through live and snapshot paths.
   private readonly seenMlsPub: Set<string> = new Set();
@@ -68,6 +69,15 @@ export class WorkspaceInviteManager {
     this.mlsGroup = null;
     this.mlsClient?.free();
     this.mlsClient = null;
+  }
+
+  public setOnOwnerSessionAdvanced(cb: (sessionId: string) => Promise<void>) {
+    this.onOwnerSessionAdvanced = cb;
+  }
+
+  private async notifyOwnerSessionAdvanced(sessionId: string): Promise<void> {
+    if (!this.wsmeta.owner || !this.onOwnerSessionAdvanced) return;
+    await this.onOwnerSessionAdvanced(sessionId);
   }
 
   private pubKey(pub: MlsRefPub): string {
@@ -410,6 +420,7 @@ export class WorkspaceInviteManager {
 
       await this.provider.svs.pub_mls_commit_ref(MLS_COMMIT_BROADCAST, commitBlob, sessionId);
       await this.provider.svs.pub_mls_welcome_ref(pub.invitee, welcomeBlob, sessionId);
+      await this.notifyOwnerSessionAdvanced(sessionId);
     }
   }
 
@@ -544,6 +555,7 @@ export class WorkspaceInviteManager {
 
     // remove from authorization map
     this.inviteeProfiles.delete(name);
+    await this.notifyOwnerSessionAdvanced(sessionId);
   }
 
   public async resetGroupMlsState(): Promise<void> {
@@ -575,10 +587,12 @@ export class WorkspaceInviteManager {
       this.mlsInitPromise = (async () => {
         const client = await this.getMlsClient();
         this.mlsGroup = client.createGroup();
-        await this.rotateWorkspaceMlsKey();
+        const sessionId = this.currentMlsSessionId();
+        await this.rotateWorkspaceMlsKey(sessionId);
 
         this.wsmeta.mlsOwnerBootstrapped = true;
         await _o.stats.put(this.wsmeta.name, this.wsmeta);
+        await this.notifyOwnerSessionAdvanced(sessionId);
       })();
     }
 
