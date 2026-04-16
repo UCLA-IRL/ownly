@@ -57,6 +57,8 @@ export class Workspace {
       await _o.stats.put(metadata.name, metadata);
     }
 
+    await Workspace.ensureDeviceMetadata(metadata);
+
     // Set up workspace API and client
     let api: WorkspaceAPI | null = null;
     try {
@@ -167,6 +169,18 @@ export class Workspace {
   public async republishEncryptedState(): Promise<void> {
     await this.provider.republishEncryptedState();
     await this.proj.republishEncryptedState();
+  }
+
+  /**
+   * Manually force a fresh encrypted-state republish for the workspace.
+   * This is intended as an owner-operated recovery action when clients appear
+   * to be stuck on stale encrypted history/snapshots.
+   */
+  public async forceSnapshotUpdate(): Promise<void> {
+    if (!this.metadata.owner) {
+      throw new Error('Only the workspace owner can force a snapshot update');
+    }
+    await this.republishEncryptedState();
   }
 
   /**
@@ -288,6 +302,8 @@ export class Workspace {
       ignore: ignore,
       pendingSetup: create ? true : undefined,
       revoked: undefined,
+      deviceId: globalThis.crypto.randomUUID(),
+      isMasterDevice: true,
       psk: utils.toHex(psk),
       dsk: dsk ? utils.toHex(dsk) : null,
     });
@@ -335,6 +351,24 @@ export class Workspace {
       throw new Error(`No DSK, try again later when others are online: ${e}`);
     } finally {
       rootSvs?.stop();
+    }
+  }
+
+  private static async ensureDeviceMetadata(metadata: IWkspStats): Promise<void> {
+    let changed = false;
+
+    if (!metadata.deviceId) {
+      metadata.deviceId = globalThis.crypto.randomUUID();
+      changed = true;
+    }
+
+    if (metadata.isMasterDevice === undefined) {
+      metadata.isMasterDevice = true;
+      changed = true;
+    }
+
+    if (changed) {
+      await _o.stats.put(metadata.name, metadata);
     }
   }
 }

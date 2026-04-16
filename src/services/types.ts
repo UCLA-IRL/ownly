@@ -19,6 +19,10 @@ export type IWkspStats = {
   revoked?: boolean;
   /** Last access time */
   lastAccess?: number;
+  /** Stable identifier for this local device/workspace profile */
+  deviceId?: string;
+  /** Whether this local device is the designated master MLS device */
+  isMasterDevice?: boolean;
 
   /** Pre-shared key */
   psk: string;

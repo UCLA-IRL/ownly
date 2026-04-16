@@ -132,6 +132,12 @@
               <FontAwesomeIcon v-show="showNotifBubble" class="mr-1" :icon="faCircleExclamation" size="sm"></FontAwesomeIcon>
             </a>
           </li>
+          <li>
+            <a :class="{ 'is-disabled': isForcingSnapshot }" @click="forceSnapshotUpdate">
+              <FontAwesomeIcon class="mr-1" :icon="faArrowsRotate" size="sm" />
+              {{ isForcingSnapshot ? 'Refreshing snapshot...' : 'Force snapshot update' }}
+            </a>
+          </li>
         </ul>
       </template>
 
@@ -187,6 +193,7 @@ import {
   faCircleInfo,
   faRobot,
   faCircleExclamation,
+  faArrowsRotate,
   faMoon,
   faSun,
 } from '@fortawesome/free-solid-svg-icons';
@@ -222,6 +229,7 @@ const showProjectModal = ref(false);
 const showInviteModal = ref(false);
 const showIdentity = ref(false);
 const showAgentModal = ref(false);
+const isForcingSnapshot = ref(false);
 
 // vue-tsc chokes on this type inference
 const projectTree = useTemplateRef<Array<InstanceType<typeof ProjectTree>>>('projectTree');
@@ -442,6 +450,27 @@ function setNotification() {
   else
     showNotifBubble.value = false;
 }
+
+async function forceSnapshotUpdate() {
+  if (isForcingSnapshot.value) return;
+
+  const wksp = globalThis.ActiveWorkspace;
+  if (!wksp) {
+    Toast.error('No active workspace');
+    return;
+  }
+
+  isForcingSnapshot.value = true;
+  const progress = Toast.loading('Republishing encrypted workspace state...');
+  try {
+    await wksp.forceSnapshotUpdate();
+    await progress.success('Encrypted workspace state republished');
+  } catch (err) {
+    await progress.error(`Failed to republish workspace state: ${err}`);
+  } finally {
+    isForcingSnapshot.value = false;
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -492,6 +521,11 @@ function setNotification() {
     display: block;
     height: 35px;
     margin: 5px 0;
+  }
+
+  .menu-list a.is-disabled {
+    opacity: 0.65;
+    pointer-events: none;
   }
 
   .logo-row {

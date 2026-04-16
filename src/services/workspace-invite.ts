@@ -4,7 +4,7 @@ import * as Y from 'yjs';
 import type { Router } from 'vue-router';
 import type { WorkspaceAPI, MlsRefPub } from '@/services/ndn';
 import type { SvsProvider } from '@/services/svs-provider';
-import type { IProfile, IWkspStats } from '@/services/types';
+import type { IMlsKey, IProfile, IWkspStats } from '@/services/types';
 import  { OpenMlsLiteClient, OpenMlsLiteGroup } from '@/services/openmls-lite';
 import { GlobalBus } from '@/services/event-bus';
 
@@ -15,6 +15,18 @@ const MLS_PREJOIN_SESSION_ID = 'prejoin';
 const MLS_COMMIT_BROADCAST = '__mls_commit_broadcast__';
 type LegacyMlsFields = { mlsKey?: string; mlsSessionId?: string };
 type MlsSessionInfo = { groupIdHex: string; epoch: bigint };
+type MlsReplicaBundle = {
+  version: 1;
+  workspace: string;
+  identity: string;
+  sourceDeviceId: string;
+  sourceIsMasterDevice: boolean;
+  exportedAt: number;
+  storageSnapshotHex: string;
+  groupIdHex: string;
+  mlsKeys: IMlsKey[];
+  ownerBootstrapped: boolean;
+};
 
 export class WorkspaceInviteManager {
   private readonly inviteeProfiles: Y.Map<IProfile>;
@@ -73,6 +85,22 @@ export class WorkspaceInviteManager {
 
   public setOnOwnerSessionAdvanced(cb: (sessionId: string) => Promise<void>) {
     this.onOwnerSessionAdvanced = cb;
+  }
+
+  public isMasterDevice(): boolean {
+    return this.wsmeta.isMasterDevice ?? true;
+  }
+
+  public async setIsMasterDevice(isMasterDevice: boolean): Promise<void> {
+    if (this.wsmeta.isMasterDevice === isMasterDevice) return;
+    this.wsmeta.isMasterDevice = isMasterDevice;
+    await _o.stats.put(this.wsmeta.name, this.wsmeta);
+  }
+
+  private assertOwnerCanMergeMls(action: string): void {
+    if (!this.wsmeta.owner) return;
+    if (this.isMasterDevice()) return;
+    throw new Error(`Only a merge-enabled owner device can ${action}`);
   }
 
   private async notifyOwnerSessionAdvanced(sessionId: string): Promise<void> {
@@ -199,6 +227,79 @@ export class WorkspaceInviteManager {
     const groupId = this.mlsGroup.groupIdBytes();
     await this.provider.statePut(MLS_STORAGE_STATE_KEY, snapshot);
     await this.provider.statePut(MLS_GROUP_ID_STATE_KEY, groupId);
+  }
+
+  public async exportReplicatedMlsStateBundle(): Promise<string> {
+    if (!this.mlsClient || !this.mlsGroup) {
+      throw new Error('MLS state is not initialized on this device');
+    }
+
+    await this.persistMlsState();
+
+    const [snapshot, groupId] = await Promise.all([
+      this.provider.stateGet(MLS_STORAGE_STATE_KEY),
+      this.provider.stateGet(MLS_GROUP_ID_STATE_KEY),
+    ]);
+    if (!this.isPersistedStatePresent(snapshot) || !this.isPersistedStatePresent(groupId)) {
+      throw new Error('MLS state bundle is incomplete');
+    }
+
+    const bundle: MlsReplicaBundle = {
+      version: 1,
+      workspace: this.wsmeta.name,
+      identity: this.api.name,
+      sourceDeviceId: this.wsmeta.deviceId ?? 'unknown-device',
+      sourceIsMasterDevice: this.isMasterDevice(),
+      exportedAt: Date.now(),
+      storageSnapshotHex: utils.toHex(snapshot!),
+      groupIdHex: utils.toHex(groupId!),
+      mlsKeys: [...(this.wsmeta.mlsKeys ?? [])],
+      ownerBootstrapped: !!this.wsmeta.mlsOwnerBootstrapped,
+    };
+    return JSON.stringify(bundle);
+  }
+
+  public async importReplicatedMlsStateBundle(
+    bundleText: string,
+    isMasterDevice = false,
+  ): Promise<void> {
+    const bundle = JSON.parse(bundleText) as Partial<MlsReplicaBundle>;
+    if (bundle.version !== 1) {
+      throw new Error('Unsupported MLS replica bundle version');
+    }
+    if (bundle.workspace !== this.wsmeta.name) {
+      throw new Error(`MLS replica bundle targets ${bundle.workspace}, expected ${this.wsmeta.name}`);
+    }
+    if (bundle.identity !== this.api.name) {
+      throw new Error(`MLS replica bundle belongs to ${bundle.identity}, expected ${this.api.name}`);
+    }
+    if (!bundle.storageSnapshotHex || !bundle.groupIdHex) {
+      throw new Error('MLS replica bundle is missing required state');
+    }
+
+    this.mlsGroup?.free();
+    this.mlsGroup = null;
+    this.pendingCommitRefs = [];
+
+    await this.provider.statePut(MLS_STORAGE_STATE_KEY, utils.fromHex(bundle.storageSnapshotHex));
+    await this.provider.statePut(MLS_GROUP_ID_STATE_KEY, utils.fromHex(bundle.groupIdHex));
+
+    this.wsmeta.isMasterDevice = isMasterDevice;
+    this.wsmeta.revoked = undefined;
+    this.wsmeta.mlsJoinRequested = false;
+    this.wsmeta.mlsJoinRequestedAt = undefined;
+    this.wsmeta.mlsJoinAttempts = undefined;
+    this.wsmeta.mlsKeys = [...(bundle.mlsKeys ?? [])];
+    if (this.wsmeta.owner) {
+      this.wsmeta.mlsOwnerBootstrapped = !!bundle.ownerBootstrapped;
+    }
+
+    await _o.stats.put(this.wsmeta.name, this.wsmeta);
+
+    const restored = await this.restoreMlsStateIfAvailable();
+    if (!restored) {
+      throw new Error('Failed to restore imported MLS replica state');
+    }
   }
 
   private async clearPersistedMlsState(): Promise<void> {
@@ -399,6 +500,7 @@ export class WorkspaceInviteManager {
 
   private async onMlsKpRefs(pubs: MlsRefPub[]): Promise<void> {
     if (!this.wsmeta.owner) return;
+    if (!this.isMasterDevice()) return;
     if (!this.mlsGroup && !this.wsmeta.mlsOwnerBootstrapped) {
       await this.bootstrapOwnerMls();
     }
@@ -508,6 +610,7 @@ export class WorkspaceInviteManager {
     if (!this.wsmeta.owner) {
       throw new Error('Only workspace owner can add members');
     }
+    this.assertOwnerCanMergeMls('add members');
     if (!this.inviteeProfiles.has(invitee)) {
       throw new Error(`Invitee ${invitee} is not authorized`);
     }
@@ -532,6 +635,7 @@ export class WorkspaceInviteManager {
 
   public async removeMember(name: string): Promise<void> {
     if (!this.wsmeta.owner) throw new Error('Only workspace owner can remove members');
+    this.assertOwnerCanMergeMls('remove members');
     if (!name) throw new Error('Missing member name');
 
     const group = await this.getMlsGroup();
@@ -562,6 +666,7 @@ export class WorkspaceInviteManager {
     if (!this.wsmeta.owner) {
       throw new Error('Only workspace owner can reset MLS state for the group');
     }
+    this.assertOwnerCanMergeMls('reset MLS state for the group');
 
     await this.resetLocalMlsState('owner-triggered group reset');
 
@@ -577,6 +682,7 @@ export class WorkspaceInviteManager {
   public async bootstrapOwnerMls(): Promise<void> {
     if (!this.wsmeta.owner) return;
     if (this.mlsGroup) return;
+    this.assertOwnerCanMergeMls('bootstrap MLS state');
 
     // If already bootstrapped but no in-memory group, restore is required.
     if (this.wsmeta.mlsOwnerBootstrapped) {

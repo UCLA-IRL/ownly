@@ -195,23 +195,22 @@ export class SvsProvider {
   }
 
   /**
-   * Export the full current state of a Yjs document as a single merged update.
+   * Export the currently persisted Yjs updates for a document as a single
+   * merged update. This matches the built-in Go snapshot compression path more
+   * closely than rebuilding a fresh full-state update from a temporary doc.
    *
    * @param uuid UUID of the document
    */
   public async exportDocSnapshot(uuid: string): Promise<Uint8Array> {
-    const doc = new Y.Doc();
-    try {
-      await this.readInto(doc, uuid);
-      return Y.encodeStateAsUpdateV2(doc);
-    } finally {
-      doc.destroy();
-    }
+    const updates = await this.db.updateGetAll(uuid);
+    if (updates.length === 0) return new Uint8Array();
+    if (updates.length === 1) return updates[0].update;
+    return Y.mergeUpdatesV2(updates.map((update) => update.update));
   }
 
   /**
-   * Republish the merged encrypted state of every persisted Yjs document in this
-   * SVS group.
+   * Republish the merged encrypted Yjs history of every persisted document in
+   * this SVS group.
    */
   public async republishEncryptedState(): Promise<void> {
     const uuids = await this.db.updateListUUID();
