@@ -126,11 +126,6 @@
     <div class="field has-text-right mt-2">
       <div class="control">
         <button class="button mr-2" @click="emit('close')">Cancel</button>
-        <button class="button is-danger mr-2" @click="resetMlsState"
-          :disabled="!isOwner || resettingMls">
-          <FontAwesomeIcon class="mr-1" :icon="faArrowsRotate" />
-          {{ resettingMls ? 'Resetting MLS...' : 'Reset MLS' }}
-        </button>
         <button class="button is-primary soft-if-dark mr-2" @click="send"
           :disabled="!isOwner || pendingInvitees.length == 0">
           Invite
@@ -159,7 +154,7 @@ import { Workspace } from '@/services/workspace';
 import { Toast } from '@/utils/toast';
 import type { IProfile } from '@/services/types';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
-import { faArrowsRotate, faBars, faCheck, faClipboard, faCopy, faUserMinus, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faBars, faCheck, faClipboard, faCopy, faUserMinus, faXmark } from '@fortawesome/free-solid-svg-icons';
 
 const props = defineProps({
   show: {
@@ -182,7 +177,6 @@ const invitees = ref([] as IProfile[]);
 const pendingInvitees = ref([] as IProfile[]);
 const pendingRequests = ref([] as IProfile[]);
 const removingMember = ref<string | null>(null);
-const resettingMls = ref(false);
 
 const allInvitees = computed(() => {
   return [
@@ -278,29 +272,6 @@ async function removeExistingMember(name: string) {
     await progress.error(`Failed to remove ${name}: ${err}`);
   } finally {
     removingMember.value = null;
-  }
-}
-
-async function resetMlsState() {
-  if (!wksp.value) return;
-  if (!wksp.value.metadata.owner) {
-    Toast.error('Only the workspace owner can reset MLS state');
-    return;
-  }
-  if (resettingMls.value) return;
-  if (!globalThis.confirm('Reset the MLS state machine for the entire workspace? This will force all members to re-establish MLS state.')) {
-    return;
-  }
-
-  resettingMls.value = true;
-  const progress = Toast.loading('Resetting MLS state for the workspace...');
-  try {
-    await wksp.value.invite.resetGroupMlsState();
-    await progress.success('MLS state reset triggered');
-  } catch (err) {
-    await progress.error(`Failed to reset MLS state: ${err}`);
-  } finally {
-    resettingMls.value = false;
   }
 }
 

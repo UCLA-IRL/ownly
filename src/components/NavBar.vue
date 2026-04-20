@@ -139,8 +139,14 @@
             </a>
           </li>
           <li v-if="showAdvancedSettings">
-            <a :class="{ 'is-disabled': isRequestingSOS }" @click="sosRequest">
+            <a :class="{ 'is-disabled': isResettingMls }" @click="resetMlsState">
               <FontAwesomeIcon class="mr-1" :icon="faArrowsRotate" size="sm" />
+              {{ isResettingMls ? 'Resetting MLS...' : 'Reset MLS State' }}
+            </a>
+          </li>
+          <li v-if="showAdvancedSettings">
+            <a :class="{ 'is-disabled': isRequestingSOS }" @click="sosRequest">
+              <FontAwesomeIcon class="mr-1" :icon="faCircleExclamation" size="sm" />
               {{ isRequestingSOS ? 'Broadcasting SOS...' : 'SOS' }}
             </a>
           </li>
@@ -237,6 +243,7 @@ const showInviteModal = ref(false);
 const showIdentity = ref(false);
 const showAgentModal = ref(false);
 const showAdvancedSettings = ref(false);
+const isResettingMls = ref(false);
 const isRequestingSOS = ref(false);
 
 // vue-tsc chokes on this type inference
@@ -477,6 +484,34 @@ async function sosRequest() {
     await progress.error(`Failed to send SOS request: ${err}`);
   } finally {
     isRequestingSOS.value = false;
+  }
+}
+
+async function resetMlsState() {
+  if (isResettingMls.value) return;
+
+  const wksp = globalThis.ActiveWorkspace;
+  if (!wksp) {
+    Toast.error('No active workspace');
+    return;
+  }
+  if (!wksp.metadata.owner) {
+    Toast.error('Only the workspace owner can reset MLS state');
+    return;
+  }
+  if (!globalThis.confirm('Reset the MLS state machine for the entire workspace? This will force all members to re-establish MLS state.')) {
+    return;
+  }
+
+  isResettingMls.value = true;
+  const progress = Toast.loading('Resetting MLS state for the workspace...');
+  try {
+    await wksp.invite.resetGroupMlsState();
+    await progress.success('MLS state reset triggered');
+  } catch (err) {
+    await progress.error(`Failed to reset MLS state: ${err}`);
+  } finally {
+    isResettingMls.value = false;
   }
 }
 </script>
