@@ -133,9 +133,15 @@
             </a>
           </li>
           <li>
-            <a :class="{ 'is-disabled': isForcingSnapshot }" @click="forceSnapshotUpdate">
+            <a @click="showAdvancedSettings = !showAdvancedSettings">
+              <FontAwesomeIcon class="mr-1" :icon="faGear" size="sm" />
+              {{ showAdvancedSettings ? 'Hide advanced settings' : 'Advanced settings' }}
+            </a>
+          </li>
+          <li v-if="showAdvancedSettings">
+            <a :class="{ 'is-disabled': isRequestingSOS }" @click="sosRequest">
               <FontAwesomeIcon class="mr-1" :icon="faArrowsRotate" size="sm" />
-              {{ isForcingSnapshot ? 'Refreshing snapshot...' : 'Force snapshot update' }}
+              {{ isRequestingSOS ? 'Broadcasting SOS...' : 'SOS' }}
             </a>
           </li>
         </ul>
@@ -194,6 +200,7 @@ import {
   faRobot,
   faCircleExclamation,
   faArrowsRotate,
+  faGear,
   faMoon,
   faSun,
 } from '@fortawesome/free-solid-svg-icons';
@@ -229,7 +236,8 @@ const showProjectModal = ref(false);
 const showInviteModal = ref(false);
 const showIdentity = ref(false);
 const showAgentModal = ref(false);
-const isForcingSnapshot = ref(false);
+const showAdvancedSettings = ref(false);
+const isRequestingSOS = ref(false);
 
 // vue-tsc chokes on this type inference
 const projectTree = useTemplateRef<Array<InstanceType<typeof ProjectTree>>>('projectTree');
@@ -451,8 +459,8 @@ function setNotification() {
     showNotifBubble.value = false;
 }
 
-async function forceSnapshotUpdate() {
-  if (isForcingSnapshot.value) return;
+async function sosRequest() {
+  if (isRequestingSOS.value) return;
 
   const wksp = globalThis.ActiveWorkspace;
   if (!wksp) {
@@ -460,15 +468,15 @@ async function forceSnapshotUpdate() {
     return;
   }
 
-  isForcingSnapshot.value = true;
-  const progress = Toast.loading('Republishing encrypted workspace state...');
+  isRequestingSOS.value = true;
+  const progress = Toast.loading('Broadcasting SOS refresh request...');
   try {
-    await wksp.forceSnapshotUpdate();
-    await progress.success('Encrypted workspace state republished');
+    const { requestId, responder } = await wksp.sosRequest();
+    await progress.success(`SOS request sent to ${responder}`);
   } catch (err) {
-    await progress.error(`Failed to republish workspace state: ${err}`);
+    await progress.error(`Failed to send SOS request: ${err}`);
   } finally {
-    isForcingSnapshot.value = false;
+    isRequestingSOS.value = false;
   }
 }
 </script>

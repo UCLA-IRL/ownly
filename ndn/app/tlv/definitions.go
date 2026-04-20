@@ -12,13 +12,19 @@ type Message struct {
 	DSKResponse *DSKResponse `tlv:"0xCC"`
 	//+field:struct:DSKACK
 	DSKACK *DSKACK `tlv:"0xCE"`
-	//MLS messages
+	// MLS messages
 	//+field:struct:MlsBlobRef
 	MlsKeyPackage *MlsBlobRef `tlv:"0xD0"`
 	//+field:struct:MlsBlobRef
 	MlsCommit *MlsBlobRef `tlv:"0xD2"`
 	//+field:struct:MlsBlobRef
 	MlsWelcome *MlsBlobRef `tlv:"0xD4"`
+	//+field:struct:RefreshPing
+	RefreshPing *RefreshPing `tlv:"0xD6"`
+	//+field:struct:RefreshAck
+	RefreshAck *RefreshAck `tlv:"0xD8"`
+	//+field:struct:RefreshRequest
+	RefreshRequest *RefreshRequest `tlv:"0xDA"`
 }
 
 type AeadBlock struct {
@@ -63,4 +69,37 @@ type MlsBlobRef struct {
 	BlobName string `tlv:"0x5A4"`
 	//+field:string
 	SessionId string `tlv:"0x5A6"`
+}
+
+type RefreshPing struct {
+	//+field:string
+	RequestId string `tlv:"0x5A0"`
+	//+field:string
+	Requester string `tlv:"0x5A2"`
+	//+field:string
+	SentAt string `tlv:"0x5A4"`
+}
+
+type RefreshAck struct {
+	//+field:string
+	RequestId string `tlv:"0x5A0"`
+	//+field:string
+	Requester string `tlv:"0x5A2"`
+	//+field:string
+	Responder string `tlv:"0x5A4"`
+	//+field:natural
+	Freshness uint64 `tlv:"0x5A6"`
+	//+field:string
+	SentAt string `tlv:"0x5A8"`
+}
+
+type RefreshRequest struct {
+	//+field:string
+	RequestId string `tlv:"0x5A0"`
+	//+field:string
+	Requester string `tlv:"0x5A2"`
+	//+field:string
+	Responder string `tlv:"0x5A4"`
+	//+field:string
+	SentAt string `tlv:"0x5A6"`
 }
