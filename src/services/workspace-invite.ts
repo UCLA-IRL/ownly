@@ -13,7 +13,6 @@ const MLS_GROUP_ID_STATE_KEY = 'mls/group-id/v1';
 const MLS_RESET_SENTINEL = '__mls_reset__';
 const MLS_PREJOIN_SESSION_ID = 'prejoin';
 const MLS_COMMIT_BROADCAST = '__mls_commit_broadcast__';
-type LegacyMlsFields = { mlsKey?: string; mlsSessionId?: string };
 type MlsSessionInfo = { groupIdHex: string; epoch: bigint };
 type MlsReplicaBundle = {
   version: 1;
@@ -213,8 +212,6 @@ export class WorkspaceInviteManager {
     ].slice(0, 5);
 
     this.wsmeta.mlsKeys = recent;
-    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsKey;
-    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsSessionId;
     this.wsmeta.mlsJoinRequested = false;
     await _o.stats.put(this.wsmeta.name, this.wsmeta);
     await this.persistMlsState();
@@ -334,8 +331,6 @@ export class WorkspaceInviteManager {
     this.mlsClient = null;
     this.pendingCommitRefs = [];
 
-    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsKey;
-    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsSessionId;
     this.wsmeta.mlsJoinRequested = false;
     this.wsmeta.mlsJoinRequestedAt = undefined;
     this.wsmeta.mlsJoinAttempts = undefined;
@@ -364,8 +359,6 @@ export class WorkspaceInviteManager {
     this.mlsClient = null;
     this.pendingCommitRefs = [];
 
-    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsKey;
-    delete (this.wsmeta as IWkspStats & LegacyMlsFields).mlsSessionId;
     this.wsmeta.mlsJoinRequested = false;
     this.wsmeta.mlsJoinRequestedAt = undefined;
     this.wsmeta.mlsJoinAttempts = undefined;

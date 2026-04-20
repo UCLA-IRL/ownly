@@ -13,11 +13,6 @@ import type { SvsAloApi, WorkspaceAPI, RefreshAckPub, RefreshPingPub, RefreshReq
 import type { Router } from 'vue-router';
 import type { IWkspStats } from '@/services/types';
 
-type LegacyMlsFields = {
-  mlsKey?: string;
-  mlsSessionId?: string;
-};
-
 /**
  * We keep an active instance of the open workspace.
  * This always runs in the background collecting data.
@@ -59,14 +54,6 @@ export class Workspace {
   private static async create(metadata: IWkspStats): Promise<Workspace> {
     // Start connection to testbed
     await ndn.api.connect_testbed();
-
-    const legacyMls = metadata as IWkspStats & LegacyMlsFields;
-    if ((!metadata.mlsKeys || metadata.mlsKeys.length === 0) && legacyMls.mlsKey && legacyMls.mlsSessionId) {
-      metadata.mlsKeys = [{ sessionId: legacyMls.mlsSessionId, mlsKey: legacyMls.mlsKey }];
-      delete legacyMls.mlsKey;
-      delete legacyMls.mlsSessionId;
-      await _o.stats.put(metadata.name, metadata);
-    }
 
     await Workspace.ensureDeviceMetadata(metadata);
 
