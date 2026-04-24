@@ -3,7 +3,7 @@ import * as awareProto from 'y-protocols/awareness.js';
 
 import * as utils from '@/utils';
 
-import type { AwarenessApi, SvsAloApi, WorkspaceAPI, RefreshAckPub, RefreshPingPub, RefreshRequestPub, SvsAloSub, MlsRefPub } from '@/services/ndn';
+import type { AwarenessApi, SvsAloApi, WorkspaceAPI, RefreshPongPub, RefreshPingPub, SvsAloSub, MlsRefPub } from '@/services/ndn';
 import type { AwarenessLocalState } from '@/services/types';
 import type { ProjDb } from '@/services/database/proj_db';
 import { Bundler } from "@/utils/bundler.ts";
@@ -32,8 +32,7 @@ export class SvsProvider {
   private pendingMlsCommitRefs: MlsRefPub[] = [];
 
   private readonly refreshPingSubs = new Set<SvsAloSub<RefreshPingPub>>();
-  private readonly refreshAckSubs = new Set<SvsAloSub<RefreshAckPub>>();
-  private readonly refreshReqSubs = new Set<SvsAloSub<RefreshRequestPub>>();
+  private readonly refreshPongSubs = new Set<SvsAloSub<RefreshPongPub>>();
 
   private constructor(
     private readonly db: ProjDb,
@@ -192,12 +191,8 @@ export class SvsProvider {
         await this.emitBatch(this.refreshPingSubs, pubs);
       },
 
-      on_refresh_ack: async (pubs) => {
-        await this.emitBatch(this.refreshAckSubs, pubs);
-      },
-
-      on_refresh_req: async (pubs) => {
-        await this.emitBatch(this.refreshReqSubs, pubs);
+      on_refresh_pong: async (pubs) => {
+        await this.emitBatch(this.refreshPongSubs, pubs);
       },
 
     });
@@ -216,14 +211,9 @@ export class SvsProvider {
     return () => this.refreshPingSubs.delete(cb);
   }
 
-  public onRefreshAck(cb: SvsAloSub<RefreshAckPub>): () => void {
-    this.refreshAckSubs.add(cb);
-    return () => this.refreshAckSubs.delete(cb);
-  }
-
-  public onRefreshReq(cb: SvsAloSub<RefreshRequestPub>): () => void {
-    this.refreshReqSubs.add(cb);
-    return () => this.refreshReqSubs.delete(cb);
+  public onRefreshPong(cb: SvsAloSub<RefreshPongPub>): () => void {
+    this.refreshPongSubs.add(cb);
+    return () => this.refreshPongSubs.delete(cb);
   }
 
   private async emitBatch<T>(subs: Set<SvsAloSub<T>>, pubs: T[]): Promise<void> {

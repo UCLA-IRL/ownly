@@ -21,10 +21,8 @@ type Message struct {
 	MlsWelcome *MlsBlobRef `tlv:"0xD4"`
 	//+field:struct:RefreshPing
 	RefreshPing *RefreshPing `tlv:"0xD6"`
-	//+field:struct:RefreshAck
-	RefreshAck *RefreshAck `tlv:"0xD8"`
-	//+field:struct:RefreshRequest
-	RefreshRequest *RefreshRequest `tlv:"0xDA"`
+	//+field:struct:RefreshPong
+	RefreshPong *RefreshPong `tlv:"0xD8"`
 }
 
 type AeadBlock struct {
@@ -80,7 +78,7 @@ type RefreshPing struct {
 	SentAt string `tlv:"0x5A4"`
 }
 
-type RefreshAck struct {
+type RefreshPong struct {
 	//+field:string
 	RequestId string `tlv:"0x5A0"`
 	//+field:string
@@ -91,15 +89,4 @@ type RefreshAck struct {
 	Freshness uint64 `tlv:"0x5A6"`
 	//+field:string
 	SentAt string `tlv:"0x5A8"`
-}
-
-type RefreshRequest struct {
-	//+field:string
-	RequestId string `tlv:"0x5A0"`
-	//+field:string
-	Requester string `tlv:"0x5A2"`
-	//+field:string
-	Responder string `tlv:"0x5A4"`
-	//+field:string
-	SentAt string `tlv:"0x5A6"`
 }

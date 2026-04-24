@@ -280,6 +280,12 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		log.Info(nil, "Watching for access requests")
 	}
 
+	// Watch for republish requests interests to republish Yjs Deltas
+	refreshReqPrefix := group.
+		Append(enc.NewGenericComponent("root")).
+		Append(enc.NewKeywordComponent("REFRESH_REQ")).
+		Append(idName...)
+
 	var workspaceJs map[string]any
 	workspaceJs = map[string]any{
 		// name: string;
@@ -338,6 +344,9 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// stop(): Promise<void>;
 		"stop": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			_ = a.engine.DetachHandler(refreshReqPrefix)
+			client.WithdrawPrefix(refreshReqPrefix, nil)
+
 			if err := client.Stop(); err != nil {
 				return nil, err
 			}
@@ -385,6 +394,136 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				"data": jsutil.SliceToJsArray(state.Content().Join()),
 				"name": js.ValueOf(state.Name().String()),
 			}), nil
+		}),
+
+		// set_on_refresh_req(cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+		"set_on_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			cb := p[0]
+			if cb.Type() != js.TypeFunction {
+				return nil, fmt.Errorf("refresh request callback must be a function")
+			}
+
+			if err := a.engine.AttachHandler(refreshReqPrefix, func(args ndn.InterestHandlerArgs) {
+				name := args.Interest.Name()
+
+				if len(name) < len(refreshReqPrefix)+2 {
+					log.Warn(nil, "Invalid refresh request name", "name", name)
+					return
+				}
+
+				requestId := name[len(refreshReqPrefix)].String()
+				requester := name[len(refreshReqPrefix)+1:].String()
+
+				go func() {
+					replyStatus := func(status string) {
+						signer := client.SuggestSigner(name)
+						if signer == nil {
+							log.Warn(nil, "No signer for refresh response", "name", name, "status", status)
+							return
+						}
+
+						data, err := spec.Spec{}.MakeData(
+							name,
+							&ndn.DataConfig{
+								Freshness: optional.Some(time.Second),
+							},
+							enc.Wire{[]byte(status)},
+							signer,
+						)
+						if err != nil {
+							log.Warn(nil, "Failed to make refresh response", "err", err, "status", status)
+							return
+						}
+
+						if err := args.Reply(data.Wire); err != nil {
+							log.Warn(nil, "Failed to reply to refresh request", "err", err, "status", status)
+						}
+					}
+
+					_, err := jsutil.Await(cb.Invoke(
+						js.ValueOf(requestId),
+						js.ValueOf(requester),
+					))
+					if err != nil {
+						log.Warn(nil, "Refresh request callback failed", "err", err)
+						replyStatus("fail")
+						return
+					}
+
+					replyStatus("ok")
+				}()
+			}); err != nil {
+				return nil, err
+			}
+
+			client.AnnouncePrefix(ndn.Announcement{
+				Name:    refreshReqPrefix,
+				Expose:  true,
+				OnError: nil,
+			})
+
+			return nil, nil
+		}),
+
+		// send_refresh_req(name: string): Promise<"ok" | "fail">;
+		"send_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			name, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+
+			type refreshResult struct {
+				status string
+				err    error
+			}
+			ch := make(chan refreshResult, 1)
+			client.ExpressR(ndn.ExpressRArgs{
+				Name: name,
+				Config: &ndn.InterestConfig{
+					MustBeFresh: true,
+					Lifetime:    optional.Some(5 * time.Second),
+				},
+				Retries: 2,
+				Callback: func(args ndn.ExpressCallbackArgs) {
+					if args.Result == ndn.InterestResultError {
+						ch <- refreshResult{err: fmt.Errorf("refresh request failed: %w", args.Error)}
+						return
+					}
+					if args.Result != ndn.InterestResultData {
+						ch <- refreshResult{err: fmt.Errorf("refresh request failed with result: %s", args.Result)}
+						return
+					}
+
+					client.ValidateExt(ndn.ValidateExtArgs{
+						Data:       args.Data,
+						SigCovered: args.SigCovered,
+						Callback: func(valid bool, err error) {
+							if !valid {
+								if err != nil {
+									ch <- refreshResult{err: fmt.Errorf("invalid refresh response: %w", err)}
+								} else {
+									ch <- refreshResult{err: fmt.Errorf("invalid refresh response")}
+								}
+								return
+							}
+
+							status := string(args.Data.Content().Join())
+							if status != "ok" && status != "fail" {
+								ch <- refreshResult{err: fmt.Errorf("invalid refresh response status: %q", status)}
+								return
+							}
+
+							ch <- refreshResult{status: status}
+						},
+					})
+				},
+			})
+
+			result := <-ch
+			if result.err != nil {
+				return nil, result.err
+			}
+			return js.ValueOf(result.status), nil
 		}),
 
 		// svs_alo(group: string, state: Uint8Array | undefined, persist_state: (state: Uint8Array) => Promise<void>): Promise<SvsAloApi>;
@@ -735,8 +874,8 @@ func (a *App) SvsAloJs(
 			return js.ValueOf(name.String()), nil
 		}),
 
-		// pub_refresh_ack(requestId: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
-		"pub_refresh_ack": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+		// pub_refresh_pong(requestId: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
+		"pub_refresh_pong": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			requestId := p[0].String()
 			requester := p[1].String()
 			responder := p[2].String()
@@ -748,40 +887,11 @@ func (a *App) SvsAloJs(
 			}
 
 			pub := &tlv.Message{
-				RefreshAck: &tlv.RefreshAck{
+				RefreshPong: &tlv.RefreshPong{
 					RequestId: requestId,
 					Requester: requester,
 					Responder: responder,
 					Freshness: freshness,
-					SentAt:    sentAt,
-				},
-			}
-
-			name, state, err := alo.Publish(pub.Encode())
-			if err != nil {
-				return nil, err
-			}
-
-			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-			return js.ValueOf(name.String()), nil
-		}),
-
-		// pub_refresh_req(requestId: string, requester: string, responder: string, sentAt: string): Promise<string>;
-		"pub_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			requestId := p[0].String()
-			requester := p[1].String()
-			responder := p[2].String()
-			sentAt := p[3].String()
-
-			if requestId == "" || requester == "" || responder == "" {
-				return nil, fmt.Errorf("invalid request parameters")
-			}
-
-			pub := &tlv.Message{
-				RefreshRequest: &tlv.RefreshRequest{
-					RequestId: requestId,
-					Requester: requester,
-					Responder: responder,
 					SentAt:    sentAt,
 				},
 			}
@@ -801,12 +911,14 @@ func (a *App) SvsAloJs(
 			blobName := p[1].String()
 			sessionId := p[2].String()
 			log.Info(nil, "MLS KP publish request", "invitee", invitee, "blob", blobName)
-			if invitee == "" || blobName == "" { return nil, fmt.Errorf("invalid invitee or blob name") }
+			if invitee == "" || blobName == "" {
+				return nil, fmt.Errorf("invalid invitee or blob name")
+			}
 
 			pub := &tlv.Message{
 				MlsKeyPackage: &tlv.MlsBlobRef{
-					Invitee: invitee,
-					BlobName: blobName,
+					Invitee:   invitee,
+					BlobName:  blobName,
 					SessionId: sessionId,
 				},
 			}
@@ -826,12 +938,14 @@ func (a *App) SvsAloJs(
 			invitee := p[0].String()
 			blobName := p[1].String()
 			sessionId := p[2].String()
-			if invitee == "" || blobName == "" || sessionId == "" { return nil, fmt.Errorf("invalid invitee, blob name, or session ID") }
+			if invitee == "" || blobName == "" || sessionId == "" {
+				return nil, fmt.Errorf("invalid invitee, blob name, or session ID")
+			}
 
 			pub := &tlv.Message{
 				MlsWelcome: &tlv.MlsBlobRef{
-					Invitee: invitee,
-					BlobName: blobName,
+					Invitee:   invitee,
+					BlobName:  blobName,
 					SessionId: sessionId,
 				},
 			}
@@ -851,12 +965,14 @@ func (a *App) SvsAloJs(
 			invitee := p[0].String()
 			blobName := p[1].String()
 			sessionId := p[2].String()
-			if invitee == "" || blobName == "" || sessionId == "" { return nil, fmt.Errorf("invalid invitee, blob name, or session ID") }
+			if invitee == "" || blobName == "" || sessionId == "" {
+				return nil, fmt.Errorf("invalid invitee, blob name, or session ID")
+			}
 
 			pub := &tlv.Message{
 				MlsCommit: &tlv.MlsBlobRef{
-					Invitee: invitee,
-					BlobName: blobName,
+					Invitee:   invitee,
+					BlobName:  blobName,
 					SessionId: sessionId,
 				},
 			}
@@ -877,8 +993,7 @@ func (a *App) SvsAloJs(
 		//   on_mls_welcome_ref,
 		//   on_mls_commit_ref,
 		//   on_refresh_ping,
-		//   on_refresh_ack,
-		//   on_refresh_req,
+		//   on_refresh_pong,
 		// }): Promise<void>;
 		"subscribe": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			// Send a list of publications to the JS callback
@@ -888,8 +1003,7 @@ func (a *App) SvsAloJs(
 				mlsWelcomeRefs := js.Global().Get("Array").New()
 				mlsCommitRefs := js.Global().Get("Array").New()
 				refreshPings := js.Global().Get("Array").New()
-				refreshAcks := js.Global().Get("Array").New()
-				refreshReqs := js.Global().Get("Array").New()
+				refreshPongs := js.Global().Get("Array").New()
 
 				for _, pub := range pubs {
 					pmsg, err := tlv.ParseMessage(enc.NewWireView(pub.Content), true)
@@ -954,39 +1068,39 @@ func (a *App) SvsAloJs(
 							timer.Stop()
 							delete(a.dskReqs, peerHex)
 						}
-						
+
 					// Handle incoming MLS KeyPackage reference
 					case pmsg.MlsKeyPackage != nil:
 						log.Info(nil, "Decoded MLS KP ref", "invitee", pmsg.MlsKeyPackage.Invitee, "blob", pmsg.MlsKeyPackage.BlobName)
 						mlsKpRefs.Call("push", js.ValueOf(map[string]any{
-							"invitee":   pmsg.MlsKeyPackage.Invitee,
-							"blob_name": pmsg.MlsKeyPackage.BlobName,
+							"invitee":    pmsg.MlsKeyPackage.Invitee,
+							"blob_name":  pmsg.MlsKeyPackage.BlobName,
 							"session_id": pmsg.MlsKeyPackage.SessionId,
-							"publisher": pub.Publisher.String(),
-							"boot_time": pub.BootTime,
-							"seq_num":   pub.SeqNum,
+							"publisher":  pub.Publisher.String(),
+							"boot_time":  pub.BootTime,
+							"seq_num":    pub.SeqNum,
 						}))
 
 					// Handle incoming MLS Welcome reference
 					case pmsg.MlsWelcome != nil:
 						mlsWelcomeRefs.Call("push", js.ValueOf(map[string]any{
-							"invitee":   pmsg.MlsWelcome.Invitee,
-							"blob_name": pmsg.MlsWelcome.BlobName,
+							"invitee":    pmsg.MlsWelcome.Invitee,
+							"blob_name":  pmsg.MlsWelcome.BlobName,
 							"session_id": pmsg.MlsWelcome.SessionId,
-							"publisher": pub.Publisher.String(),
-							"boot_time": pub.BootTime,
-							"seq_num":   pub.SeqNum,
+							"publisher":  pub.Publisher.String(),
+							"boot_time":  pub.BootTime,
+							"seq_num":    pub.SeqNum,
 						}))
 
 					// Handle incoming MLS Commit reference
 					case pmsg.MlsCommit != nil:
 						mlsCommitRefs.Call("push", js.ValueOf(map[string]any{
-							"invitee":   pmsg.MlsCommit.Invitee,
-							"blob_name": pmsg.MlsCommit.BlobName,
+							"invitee":    pmsg.MlsCommit.Invitee,
+							"blob_name":  pmsg.MlsCommit.BlobName,
 							"session_id": pmsg.MlsCommit.SessionId,
-							"publisher": pub.Publisher.String(),
-							"boot_time": pub.BootTime,
-							"seq_num":   pub.SeqNum,
+							"publisher":  pub.Publisher.String(),
+							"boot_time":  pub.BootTime,
+							"seq_num":    pub.SeqNum,
 						}))
 
 					case pmsg.RefreshPing != nil:
@@ -999,24 +1113,13 @@ func (a *App) SvsAloJs(
 							"seq_num":    pub.SeqNum,
 						}))
 
-					case pmsg.RefreshAck != nil:
-						refreshAcks.Call("push", js.ValueOf(map[string]any{
-							"request_id": pmsg.RefreshAck.RequestId,
-							"requester":  pmsg.RefreshAck.Requester,
-							"responder":  pmsg.RefreshAck.Responder,
-							"freshness":  pmsg.RefreshAck.Freshness,
-							"sent_at":    pmsg.RefreshAck.SentAt,
-							"publisher":  pub.Publisher.String(),
-							"boot_time":  pub.BootTime,
-							"seq_num":    pub.SeqNum,
-						}))
-
-					case pmsg.RefreshRequest != nil:
-						refreshReqs.Call("push", js.ValueOf(map[string]any{
-							"request_id": pmsg.RefreshRequest.RequestId,
-							"requester":  pmsg.RefreshRequest.Requester,
-							"responder":  pmsg.RefreshRequest.Responder,
-							"sent_at":    pmsg.RefreshRequest.SentAt,
+					case pmsg.RefreshPong != nil:
+						refreshPongs.Call("push", js.ValueOf(map[string]any{
+							"request_id": pmsg.RefreshPong.RequestId,
+							"requester":  pmsg.RefreshPong.Requester,
+							"responder":  pmsg.RefreshPong.Responder,
+							"freshness":  pmsg.RefreshPong.Freshness,
+							"sent_at":    pmsg.RefreshPong.SentAt,
 							"publisher":  pub.Publisher.String(),
 							"boot_time":  pub.BootTime,
 							"seq_num":    pub.SeqNum,
@@ -1028,7 +1131,7 @@ func (a *App) SvsAloJs(
 						// log.Warn(a, "Ignoring unknown message", "publisher", pub.Publisher)
 					}
 				}
-				
+
 				invokeBatch := func(name string, arr js.Value) {
 					if arr.Get("length").Int() == 0 {
 						return
@@ -1045,8 +1148,7 @@ func (a *App) SvsAloJs(
 				invokeBatch("on_mls_welcome_ref", mlsWelcomeRefs)
 				invokeBatch("on_mls_commit_ref", mlsCommitRefs)
 				invokeBatch("on_refresh_ping", refreshPings)
-				invokeBatch("on_refresh_ack", refreshAcks)
-				invokeBatch("on_refresh_req", refreshReqs)
+				invokeBatch("on_refresh_pong", refreshPongs)
 			}
 
 			// Subscribe to the SVS instance

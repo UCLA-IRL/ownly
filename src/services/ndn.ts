@@ -69,6 +69,10 @@ export interface WorkspaceAPI {
   produce(name: string, data: Uint8Array): Promise<void>;
   /** Consume an NDN object with a name */
   consume(name: string): Promise<{ data: Uint8Array; name: string }>;
+  /** Register a refresh request handler for SOS */
+  set_on_refresh_req(cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+  /** Send a directed SOS refresh request Interest */
+  send_refresh_req(name: string): Promise<'ok' | 'fail'>;
 
   /** SVS ALO instance */
   svs_alo(
@@ -113,10 +117,8 @@ export interface SvsAloApi {
   pub_yjs_delta(uuid: string, binary: Uint8Array): Promise<void>;
   /** Publish refresh ping command */
   pub_refresh_ping(request_id: string, requester: string, sentAt: string): Promise<string>;
-  /** Publish refresh ack command */
-  pub_refresh_ack(request_id: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
-  /** Publish refresh request command */
-  pub_refresh_req(request_id: string, requester: string, responder: string, sentAt: string): Promise<string>;
+  /** Publish refresh pong command */
+  pub_refresh_pong(request_id: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
   /** Publish blob fetch command */
   pub_blob_fetch(name: string, encapsulate: Uint8Array | undefined): Promise<string>;
   /** Publish request for the DSK */
@@ -138,8 +140,7 @@ export interface SvsAloApi {
     on_mls_welcome_ref?: SvsAloSub<MlsRefPub>;
     on_mls_commit_ref?: SvsAloSub<MlsRefPub>;
     on_refresh_ping?: SvsAloSub<RefreshPingPub>;
-    on_refresh_ack?: SvsAloSub<RefreshAckPub>;
-    on_refresh_req?: SvsAloSub<RefreshRequestPub>;
+    on_refresh_pong?: SvsAloSub<RefreshPongPub>;
   }): Promise<void>;
 
   /** Awareness instance piggybacking on this SVS instance */
@@ -162,18 +163,11 @@ export type RefreshPingPub = SvsAloPubInfo & {
   sent_at: string;
 };
 
-export type RefreshAckPub = SvsAloPubInfo & {
+export type RefreshPongPub = SvsAloPubInfo & {
   request_id: string;
   requester: string;
   responder: string;
   freshness: number;
-  sent_at: string;
-};
-
-export type RefreshRequestPub = SvsAloPubInfo & {
-  request_id: string;
-  requester: string;
-  responder: string;
   sent_at: string;
 };
 
