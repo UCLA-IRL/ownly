@@ -15,7 +15,6 @@ type Provider = openmls_rust_crypto::OpenMlsRustCrypto;
 
 #[wasm_bindgen]
 pub struct Client {
-    name: String,
     provider: Rc<Provider>,
     signer: Rc<SignatureKeyPair>,
     credential: CredentialWithKey,
@@ -24,16 +23,16 @@ pub struct Client {
 #[wasm_bindgen]
 impl Client {
     #[wasm_bindgen(constructor)]
-    pub fn new(name: String) -> Result<Client, JsValue> {
+    pub fn new(identity: String) -> Result<Client, JsValue> {
         let provider = Rc::new(Provider::default());
         let suite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
         let (credential, signer) = generate_credential_with_key(
-            name.as_bytes().to_vec(),
+            identity.as_bytes().to_vec(),
             CredentialType::Basic,
             suite.signature_algorithm(),
             provider.as_ref(),
         )?;
-        Ok(Client {name, provider, signer: Rc::new(signer), credential})
+        Ok(Client {provider, signer: Rc::new(signer), credential})
     }
 
     #[wasm_bindgen]
@@ -55,6 +54,16 @@ impl Client {
         let suite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
         let kp = generate_key_package(suite, self.provider.as_ref(), self.signer.as_ref(), self.credential.clone())?;
         kp.tls_serialize_detached().map_err(err)
+    }
+
+    #[wasm_bindgen]
+    pub fn key_package_identity(&self, kp_bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
+        let kp = parse_key_package(self.provider.as_ref(), kp_bytes)?;
+        let credential = kp.leaf_node().credential();
+        if credential.credential_type() != CredentialType::Basic {
+            return Err(JsValue::from_str("Unsupported MLS credential type"));
+        }
+        Ok(credential.serialized_content().to_vec())
     }
 
     #[wasm_bindgen]
@@ -200,12 +209,10 @@ impl Group {
     let kp_vec: Vec<KeyPackage> = key_packages.iter()
         .map(|v| -> Result<_, JsValue> {
             let bytes = v.clone().dyn_into::<js_sys::Uint8Array>()?.to_vec();
-            let kp_in = KeyPackageIn::tls_deserialize(&mut bytes.as_slice()).map_err(err)?;
-            let kp = kp_in.validate(self.provider().crypto(), ProtocolVersion::Mls10).map_err(err)?;
-            Ok(kp)
+            parse_key_package(self.provider(), &bytes)
         })
         .collect::<Result<_, _>>()?;
-        let (commit, welcome, group_info_opt) = self.group.add_members(self.provider.as_ref(), self.signer.as_ref(), &kp_vec).map_err(err)?;
+        let (commit, welcome, _group_info_opt) = self.group.add_members(self.provider.as_ref(), self.signer.as_ref(), &kp_vec).map_err(err)?;
         let out = js_sys::Object::new();
         let commit_bytes = commit.tls_serialize_detached().map_err(err)?;
         let welcome_bytes = welcome.tls_serialize_detached().map_err(err)?;
@@ -217,7 +224,7 @@ impl Group {
     #[wasm_bindgen]
     pub fn remove_member(&mut self, leaves: Box<[u32]>) -> Result<JsValue, JsValue> {
         let idxs: Vec<LeafNodeIndex> = leaves.iter().map(|i| LeafNodeIndex::new(*i)).collect();
-        let (commit, mls_msg_out,group_info_opt) =
+        let (commit, _mls_msg_out, _group_info_opt) =
             self.group.remove_members(self.provider.as_ref(), self.signer.as_ref(), &idxs)
                 .map_err(err)?;
         let out = js_sys::Object::new();
@@ -228,14 +235,22 @@ impl Group {
     }
 
     #[wasm_bindgen]
-    pub fn member_index_by_identity(&self, identity: &[u8]) -> Option<u32> {
+    pub fn member_indexes_by_identity_prefix(&self, identity_prefix: &[u8]) -> Box<[u32]> {
         self.group
             .members()
-            .find(|m| {
-                m.credential.credential_type() == CredentialType::Basic &&
-                m.credential.serialized_content() == identity
+            .filter(|m| {
+                if m.credential.credential_type() != CredentialType::Basic {
+                    return false;
+                }
+                let identity = m.credential.serialized_content();
+                let Some(device_id) = identity.strip_prefix(identity_prefix) else {
+                    return false;
+                };
+                !device_id.is_empty() && !device_id.contains(&b'/')
             })
             .map(|m| m.index.u32())
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
     }
     
     #[wasm_bindgen]
@@ -272,6 +287,17 @@ fn generate_key_package(
         .build(ciphersuite, provider, signer, credential_with_key)
         .map_err(err)?;
     Ok(bundle.key_package().clone())
+}
+
+fn parse_key_package(
+    provider: &impl OpenMlsProvider,
+    bytes: &[u8],
+) -> Result<KeyPackage, JsValue> {
+    let mut input = bytes;
+    let kp_in = KeyPackageIn::tls_deserialize(&mut input).map_err(err)?;
+    kp_in
+        .validate(provider.crypto(), ProtocolVersion::Mls10)
+        .map_err(err)
 }
 
 fn err<E: core::fmt::Debug>(e: E) -> JsValue {

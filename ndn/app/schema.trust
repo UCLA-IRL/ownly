@@ -40,7 +40,7 @@
 #invite: #owner/wksp/"root"/"32=INVITE"/#user <= #owner_cert
 
 // Republish Request for SOS
-#refresh_req: #owner/wksp/"root"/"32=REFRESH_REQ"/#user/_/#user <= #user_cert | #owner_cert
+#refresh_req: #owner/wksp/"root"/"32=REFRESH_REQ"/#user/_/_/#user/_ <= #user_cert | #owner_cert
 
 // DSK exchange
 #dsk: #owner/wksp/"root"/"32=DSK"/_ <= #user_cert

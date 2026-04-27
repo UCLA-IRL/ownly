@@ -73,6 +73,21 @@ export class Client {
         return v1;
     }
     /**
+     * @param {Uint8Array} kp_bytes
+     * @returns {Uint8Array}
+     */
+    key_package_identity(kp_bytes) {
+        const ptr0 = passArray8ToWasm0(kp_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.client_key_package_identity(this.__wbg_ptr, ptr0, len0);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v2;
+    }
+    /**
      * @param {Uint8Array} group_id_bytes
      * @returns {Group}
      */
@@ -86,10 +101,10 @@ export class Client {
         return Group.__wrap(ret[0]);
     }
     /**
-     * @param {string} name
+     * @param {string} identity
      */
-    constructor(name) {
-        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    constructor(identity) {
+        const ptr0 = passStringToWasm0(identity, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.client_new(ptr0, len0);
         if (ret[2]) {
@@ -180,14 +195,16 @@ export class Group {
         return v1;
     }
     /**
-     * @param {Uint8Array} identity
-     * @returns {number | undefined}
+     * @param {Uint8Array} identity_prefix
+     * @returns {Uint32Array}
      */
-    member_index_by_identity(identity) {
-        const ptr0 = passArray8ToWasm0(identity, wasm.__wbindgen_malloc);
+    member_indexes_by_identity_prefix(identity_prefix) {
+        const ptr0 = passArray8ToWasm0(identity_prefix, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.group_member_index_by_identity(this.__wbg_ptr, ptr0, len0);
-        return ret === 0x100000001 ? undefined : ret;
+        const ret = wasm.group_member_indexes_by_identity_prefix(this.__wbg_ptr, ptr0, len0);
+        var v2 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v2;
     }
     merge_pending_commit() {
         const ret = wasm.group_merge_pending_commit(this.__wbg_ptr);
@@ -380,6 +397,11 @@ function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
     wasm.__wbindgen_externrefs.set(idx, obj);
     return idx;
+}
+
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
 function getArrayU8FromWasm0(ptr, len) {

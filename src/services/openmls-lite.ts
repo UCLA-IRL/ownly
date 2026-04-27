@@ -1,12 +1,13 @@
 type WasmModule = {
     default: () => Promise<unknown>;
-    Client: new (name: string) => WasmClient;
+    Client: new (identity: string) => WasmClient;
 };
 
 type WasmClient = {
     create_group(): WasmGroup;
     join_from_welcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array | null): WasmGroup;
     key_package(): Uint8Array;
+    key_package_identity(kpBytes: Uint8Array): Uint8Array;
     load_group(groupIdBytes: Uint8Array): WasmGroup;
     export_storage_snapshot(): Uint8Array;
     import_storage_snapshot(snapshot: Uint8Array): void;
@@ -19,7 +20,7 @@ type WasmGroup = {
     merge_pending_commit(): void;
     apply_commit(commitBytes: Uint8Array): void;
     my_index(): number;
-    member_index_by_identity(identity: Uint8Array): number | undefined;
+    member_indexes_by_identity_prefix(identityPrefix: Uint8Array): Uint32Array;
     group_id_bytes(): Uint8Array;
     epoch(): bigint;
     export_secret(label: string, context: Uint8Array, len: number): Uint8Array;
@@ -40,7 +41,6 @@ let wasmModulePromise: Promise<WasmModule> | null = null;
 async function loadWasmModule(): Promise<WasmModule> {
     if (!wasmModulePromise) {
         wasmModulePromise = ( async () => {
-            const modulePath = '/openmls_lite.js';
             const module = (await import('@/wasm/openmls_lite.js')) as unknown as WasmModule;
             await module.default();
             return module;
@@ -60,13 +60,17 @@ function getU8Field(obj: unknown, field: string): Uint8Array {
 export class OpenMlsLiteClient {
     private constructor (private readonly inner: WasmClient) {}
 
-    static async create(name: string): Promise<OpenMlsLiteClient> {
+    static async create(identity: string): Promise<OpenMlsLiteClient> {
         const module = await loadWasmModule();
-        return new OpenMlsLiteClient(new module.Client(name));
+        return new OpenMlsLiteClient(new module.Client(identity));
     }
 
     keyPackage(): Uint8Array {
         return this.inner.key_package();
+    }
+
+    keyPackageIdentity(kp: Uint8Array): Uint8Array {
+        return this.inner.key_package_identity(kp);
     }
 
     createGroup(): OpenMlsLiteGroup {
@@ -133,8 +137,8 @@ export class OpenMlsLiteGroup {
         };
     }
 
-    memberIndexByIdentity(identity: Uint8Array): number | undefined {
-        return this.inner.member_index_by_identity(identity);
+    memberIndexesByIdentityPrefix(identityPrefix: Uint8Array): number[] {
+        return Array.from(this.inner.member_indexes_by_identity_prefix(identityPrefix));
     }
 
     exportSecret(label: string, context = new Uint8Array(), len = 32): Uint8Array {

@@ -4,8 +4,9 @@ import * as Y from 'yjs';
 import type { Router } from 'vue-router';
 import type { WorkspaceAPI, MlsRefPub } from '@/services/ndn';
 import type { SvsProvider } from '@/services/svs-provider';
-import type { IMlsKey, IProfile, IWkspStats } from '@/services/types';
+import type { IProfile, IWkspStats } from '@/services/types';
 import  { OpenMlsLiteClient, OpenMlsLiteGroup } from '@/services/openmls-lite';
+import { accountIdentityPrefix, encodeMlsIdentity, parseMlsIdentity } from '@/services/mls-identity';
 import { GlobalBus } from '@/services/event-bus';
 
 const MLS_STORAGE_STATE_KEY = 'mls/storage/v1';
@@ -14,18 +15,6 @@ const MLS_RESET_SENTINEL = '__mls_reset__';
 const MLS_PREJOIN_SESSION_ID = 'prejoin';
 const MLS_COMMIT_BROADCAST = '__mls_commit_broadcast__';
 type MlsSessionInfo = { groupIdHex: string; epoch: bigint };
-type MlsReplicaBundle = {
-  version: 1;
-  workspace: string;
-  identity: string;
-  sourceDeviceId: string;
-  sourceIsMasterDevice: boolean;
-  exportedAt: number;
-  storageSnapshotHex: string;
-  groupIdHex: string;
-  mlsKeys: IMlsKey[];
-  ownerBootstrapped: boolean;
-};
 
 export class WorkspaceInviteManager {
   private readonly inviteeProfiles: Y.Map<IProfile>;
@@ -141,12 +130,25 @@ export class WorkspaceInviteManager {
     return this.mlsGroup;
   }
 
+  private currentMlsIdentity(): string {
+    if (!this.wsmeta.deviceId) {
+      throw new Error('Missing local MLS device ID');
+    }
+
+    return encodeMlsIdentity(this.api.name, this.wsmeta.deviceId);
+  }
+
+  private async keyPackageIdentity(kp: Uint8Array): Promise<string> {
+    const client = await this.getMlsClient();
+    return new TextDecoder().decode(client.keyPackageIdentity(kp));
+  }
+
   /**
    * Get MLS client instance
    */
   private async getMlsClient(): Promise<OpenMlsLiteClient> {
     if (!this.mlsClient) {
-      this.mlsClient = await OpenMlsLiteClient.create(this.api.name);
+      this.mlsClient = await OpenMlsLiteClient.create(this.currentMlsIdentity());
     }
     return this.mlsClient;
   }
@@ -224,79 +226,6 @@ export class WorkspaceInviteManager {
     const groupId = this.mlsGroup.groupIdBytes();
     await this.provider.statePut(MLS_STORAGE_STATE_KEY, snapshot);
     await this.provider.statePut(MLS_GROUP_ID_STATE_KEY, groupId);
-  }
-
-  public async exportReplicatedMlsStateBundle(): Promise<string> {
-    if (!this.mlsClient || !this.mlsGroup) {
-      throw new Error('MLS state is not initialized on this device');
-    }
-
-    await this.persistMlsState();
-
-    const [snapshot, groupId] = await Promise.all([
-      this.provider.stateGet(MLS_STORAGE_STATE_KEY),
-      this.provider.stateGet(MLS_GROUP_ID_STATE_KEY),
-    ]);
-    if (!this.isPersistedStatePresent(snapshot) || !this.isPersistedStatePresent(groupId)) {
-      throw new Error('MLS state bundle is incomplete');
-    }
-
-    const bundle: MlsReplicaBundle = {
-      version: 1,
-      workspace: this.wsmeta.name,
-      identity: this.api.name,
-      sourceDeviceId: this.wsmeta.deviceId ?? 'unknown-device',
-      sourceIsMasterDevice: this.isMasterDevice(),
-      exportedAt: Date.now(),
-      storageSnapshotHex: utils.toHex(snapshot!),
-      groupIdHex: utils.toHex(groupId!),
-      mlsKeys: [...(this.wsmeta.mlsKeys ?? [])],
-      ownerBootstrapped: !!this.wsmeta.mlsOwnerBootstrapped,
-    };
-    return JSON.stringify(bundle);
-  }
-
-  public async importReplicatedMlsStateBundle(
-    bundleText: string,
-    isMasterDevice = false,
-  ): Promise<void> {
-    const bundle = JSON.parse(bundleText) as Partial<MlsReplicaBundle>;
-    if (bundle.version !== 1) {
-      throw new Error('Unsupported MLS replica bundle version');
-    }
-    if (bundle.workspace !== this.wsmeta.name) {
-      throw new Error(`MLS replica bundle targets ${bundle.workspace}, expected ${this.wsmeta.name}`);
-    }
-    if (bundle.identity !== this.api.name) {
-      throw new Error(`MLS replica bundle belongs to ${bundle.identity}, expected ${this.api.name}`);
-    }
-    if (!bundle.storageSnapshotHex || !bundle.groupIdHex) {
-      throw new Error('MLS replica bundle is missing required state');
-    }
-
-    this.mlsGroup?.free();
-    this.mlsGroup = null;
-    this.pendingCommitRefs = [];
-
-    await this.provider.statePut(MLS_STORAGE_STATE_KEY, utils.fromHex(bundle.storageSnapshotHex));
-    await this.provider.statePut(MLS_GROUP_ID_STATE_KEY, utils.fromHex(bundle.groupIdHex));
-
-    this.wsmeta.isMasterDevice = isMasterDevice;
-    this.wsmeta.revoked = undefined;
-    this.wsmeta.mlsJoinRequested = false;
-    this.wsmeta.mlsJoinRequestedAt = undefined;
-    this.wsmeta.mlsJoinAttempts = undefined;
-    this.wsmeta.mlsKeys = [...(bundle.mlsKeys ?? [])];
-    if (this.wsmeta.owner) {
-      this.wsmeta.mlsOwnerBootstrapped = !!bundle.ownerBootstrapped;
-    }
-
-    await _o.stats.put(this.wsmeta.name, this.wsmeta);
-
-    const restored = await this.restoreMlsStateIfAvailable();
-    if (!restored) {
-      throw new Error('Failed to restore imported MLS replica state');
-    }
   }
 
   private async clearPersistedMlsState(): Promise<void> {
@@ -501,27 +430,32 @@ export class WorkspaceInviteManager {
 
     for (const pub of this.uniqueOrdered(pubs)) {
       console.log(`Processing MLS KP ref from ${pub.invitee}`);
-      const invited = this.inviteeProfiles.has(pub.invitee);
-      if (!invited) {
-        console.warn(`Ignoring unauthorized MLS KP ref from ${pub.invitee}`);
+      const kp = (await this.provider.consumeBlob(pub.blob_name)).data;
+      let inviteeIdentity: string;
+      let commit: Uint8Array;
+      let welcome: Uint8Array;
+      let sessionId: string;
+      try {
+        ({ inviteeIdentity, commit, welcome, sessionId } = await this.addMemberFromKeyPackage(kp, pub.invitee));
+      } catch (e) {
+        console.warn(`Ignoring invalid MLS KP ref from ${pub.invitee}`, e);
         continue;
       }
-      const kp = (await this.provider.consumeBlob(pub.blob_name)).data;
-      const { commit, welcome, sessionId } = await this.addMemberFromKeyPackage(pub.invitee, kp);
 
-      const inviteeKey = utils.escapeUrlName(pub.invitee);
+      const inviteeKey = utils.escapeUrlName(inviteeIdentity);
       const commitBlob = await this.provider.publishBlob(`mls-commit-${inviteeKey}`, commit);
       const welcomeBlob = await this.provider.publishBlob(`mls-welcome-${inviteeKey}`, welcome);
 
       await this.provider.svs.pub_mls_commit_ref(MLS_COMMIT_BROADCAST, commitBlob, sessionId);
-      await this.provider.svs.pub_mls_welcome_ref(pub.invitee, welcomeBlob, sessionId);
+      await this.provider.svs.pub_mls_welcome_ref(inviteeIdentity, welcomeBlob, sessionId);
       await this.notifyOwnerSessionAdvanced(sessionId);
     }
   }
 
   private async onMlsWelcomeRefs(pubs: MlsRefPub[]): Promise<void> {
+    const currentIdentity = this.currentMlsIdentity();
     for (const pub of this.uniqueOrdered(pubs)) {
-      if (pub.invitee !== this.api.name) continue; // only target invitee handles welcome
+      if (pub.invitee !== currentIdentity) continue;
       console.log('Processing MLS welcome ref', pub);
       const welcome = (await this.provider.consumeBlob(pub.blob_name)).data;
       await this.joinMlsFromWelcome(welcome, pub.session_id);
@@ -571,10 +505,11 @@ export class WorkspaceInviteManager {
   public async publishKeyPackageRef(): Promise<void> {
     const client = await this.getMlsClient();
     const kp = client.keyPackage();
-    const inviteeKey = utils.escapeUrlName(this.api.name);
+    const identity = this.currentMlsIdentity();
+    const inviteeKey = utils.escapeUrlName(identity);
     console.log('Publishing MLS key package ref', { invitee: `mls-kp-${inviteeKey}`, blobSize: kp.byteLength });
     const blob = await this.provider.publishBlob(`mls-kp-${inviteeKey}`, kp);
-    await this.provider.svs.pub_mls_kp_ref(this.api.name, blob, MLS_PREJOIN_SESSION_ID);
+    await this.provider.svs.pub_mls_kp_ref(identity, blob, MLS_PREJOIN_SESSION_ID);
   }
 
   public async requestMlsJoin(): Promise<void> {
@@ -597,21 +532,24 @@ export class WorkspaceInviteManager {
   }
 
   public async addMemberFromKeyPackage(
-    invitee: string,
     kp: Uint8Array,
-  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; sessionId: string }> {
+    expectedIdentity?: string,
+  ): Promise<{ inviteeIdentity: string; commit: Uint8Array; welcome: Uint8Array; sessionId: string }> {
     if (!this.wsmeta.owner) {
       throw new Error('Only workspace owner can add members');
     }
     this.assertOwnerCanMergeMls('add members');
-    if (!this.inviteeProfiles.has(invitee)) {
-      throw new Error(`Invitee ${invitee} is not authorized`);
-    }
-    if (!invitee) {
-      throw new Error('Missing invitee');
-    }
     if (!(kp instanceof Uint8Array) || kp.length === 0) {
       throw new Error('Invalid key package');
+    }
+
+    const inviteeIdentity = await this.keyPackageIdentity(kp);
+    if (expectedIdentity && inviteeIdentity !== expectedIdentity) {
+      throw new Error(`MLS key package identity mismatch: expected ${expectedIdentity}, got ${inviteeIdentity}`);
+    }
+    const identity = parseMlsIdentity(inviteeIdentity);
+    if (!this.inviteeProfiles.has(identity.accountId)) {
+      throw new Error(`Invitee ${identity.accountId} is not authorized`);
     }
 
     const group = await this.getMlsGroup();
@@ -623,7 +561,12 @@ export class WorkspaceInviteManager {
     const sessionId = this.currentMlsSessionId();
     await this.rotateWorkspaceMlsKey(sessionId);
 
-    return { commit, welcome, sessionId };
+    return {
+      inviteeIdentity,
+      commit,
+      welcome,
+      sessionId,
+    };
   }
 
   public async removeMember(name: string): Promise<void> {
@@ -632,12 +575,12 @@ export class WorkspaceInviteManager {
     if (!name) throw new Error('Missing member name');
 
     const group = await this.getMlsGroup();
+    const encoder = new TextEncoder();
+    const indexes = group.memberIndexesByIdentityPrefix(encoder.encode(accountIdentityPrefix(name)));
+    if (!indexes.length) throw new Error(`Member ${name} not found in MLS group`);
+    if (indexes.includes(group.myIndex())) throw new Error('Refusing to remove self in this flow');
 
-    const idx = group.memberIndexByIdentity(new TextEncoder().encode(name));
-    if (idx == null) throw new Error(`Member ${name} not found in MLS group`);
-    if (idx === group.myIndex()) throw new Error('Refusing to remove self in this flow');
-
-    const { commit } = group.removeMembers([idx]);
+    const { commit } = group.removeMembers(indexes);
     group.mergePendingCommit();
 
     const sessionId = this.currentMlsSessionId();

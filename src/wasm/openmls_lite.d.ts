@@ -9,8 +9,9 @@ export class Client {
     import_storage_snapshot(snapshot: Uint8Array): void;
     join_from_welcome(welcome_bytes: Uint8Array, ratchet_tree_bytes?: Uint8Array | null): Group;
     key_package(): Uint8Array;
+    key_package_identity(kp_bytes: Uint8Array): Uint8Array;
     load_group(group_id_bytes: Uint8Array): Group;
-    constructor(name: string);
+    constructor(identity: string);
 }
 
 export class Group {
@@ -22,7 +23,7 @@ export class Group {
     epoch(): bigint;
     export_secret(label: string, context: Uint8Array, len: number): Uint8Array;
     group_id_bytes(): Uint8Array;
-    member_index_by_identity(identity: Uint8Array): number | undefined;
+    member_indexes_by_identity_prefix(identity_prefix: Uint8Array): Uint32Array;
     merge_pending_commit(): void;
     my_index(): number;
     remove_member(leaves: Uint32Array): any;
@@ -39,6 +40,7 @@ export interface InitOutput {
     readonly client_import_storage_snapshot: (a: number, b: number, c: number) => [number, number];
     readonly client_join_from_welcome: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
     readonly client_key_package: (a: number) => [number, number, number, number];
+    readonly client_key_package_identity: (a: number, b: number, c: number) => [number, number, number, number];
     readonly client_load_group: (a: number, b: number, c: number) => [number, number, number];
     readonly client_new: (a: number, b: number) => [number, number, number];
     readonly group_add_members: (a: number, b: number, c: number) => [number, number, number];
@@ -46,7 +48,7 @@ export interface InitOutput {
     readonly group_epoch: (a: number) => bigint;
     readonly group_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly group_group_id_bytes: (a: number) => [number, number];
-    readonly group_member_index_by_identity: (a: number, b: number, c: number) => number;
+    readonly group_member_indexes_by_identity_prefix: (a: number, b: number, c: number) => [number, number];
     readonly group_merge_pending_commit: (a: number) => [number, number];
     readonly group_my_index: (a: number) => number;
     readonly group_remove_member: (a: number, b: number, c: number) => [number, number, number];

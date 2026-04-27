@@ -5,6 +5,7 @@ import {WorkspaceAgentManager} from './workspace-agent'
 
 import ndn from '@/services/ndn';
 import { SvsProvider } from '@/services/svs-provider';
+import { encodeMlsIdentity } from '@/services/mls-identity';
 
 import { GlobalBus } from '@/services/event-bus';
 import * as utils from '@/utils/index';
@@ -45,6 +46,13 @@ export class Workspace {
     public readonly invite: WorkspaceInviteManager,
     public readonly agent: WorkspaceAgentManager | null,
   ) {}
+
+  private currentDeviceIdentity(): string {
+    if (!this.metadata.deviceId) {
+      throw new Error('Missing local device ID');
+    }
+    return encodeMlsIdentity(this.api.name, this.metadata.deviceId);
+  }
 
   /**
    * Start the workspace.
@@ -112,7 +120,7 @@ export class Workspace {
         await workspace.republishEncryptedState();
       });
       workspace.registerRefreshHandlers();
-      await api.set_on_refresh_req(async (requestId, requester) => {
+      await api.set_on_refresh_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
         console.log('received directed refresh request', { requestId, requester });
         await workspace.republishEncryptedState();
       });
@@ -164,17 +172,18 @@ export class Workspace {
   private async handleRefreshPing(pubs: RefreshPingPub[]): Promise<void> {
     const now = Date.now();
     this.pruneRefreshState(now);
+    const currentIdentity = this.currentDeviceIdentity();
 
     for (const pub of pubs) {
       if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
-      if (pub.requester === this.api.name) continue;
+      if (pub.requester === currentIdentity) continue;
       if (this.seenRefreshPings.has(pub.request_id)) continue;
 
       this.seenRefreshPings.set(pub.request_id, now);
       await this.provider.svs.pub_refresh_pong(
         pub.request_id,
         pub.requester,
-        this.api.name,
+        currentIdentity,
         Math.floor(Date.now() / 1000),
         new Date().toISOString(),
       );
@@ -183,10 +192,11 @@ export class Workspace {
 
   private async handleRefreshPong(pubs: RefreshPongPub[]): Promise<void> {
     this.pruneRefreshState();
+    const currentIdentity = this.currentDeviceIdentity();
 
     for (const pub of pubs) {
       if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
-      if (pub.requester !== this.api.name) continue;
+      if (pub.requester !== currentIdentity) continue;
 
       const entry = this.pendingRefreshPongs.get(pub.request_id);
       if (!entry) continue;
@@ -198,6 +208,7 @@ export class Workspace {
   public async sendRefreshPing(): Promise<string> {
     const now = Date.now();
     this.pruneRefreshState(now);
+    const currentIdentity = this.currentDeviceIdentity();
 
     const requestId = crypto.randomUUID();
     this.pendingRefreshPongs.set(requestId, {
@@ -207,11 +218,11 @@ export class Workspace {
 
     console.log('sending refresh ping', {
       request_id: requestId,
-      requester: this.api.name,
+      requester: currentIdentity,
     });
     await this.provider.svs.pub_refresh_ping(
       requestId,
-      this.api.name,
+      currentIdentity,
       new Date().toISOString(),
     );
 
@@ -243,7 +254,7 @@ export class Workspace {
           attemptedResponders.add(responder.responder);
           console.log('trying SOS responder', {
             request_id: requestId,
-            requester: this.api.name,
+            requester: this.currentDeviceIdentity(),
             responder: responder.responder,
           });
 
@@ -258,13 +269,13 @@ export class Workspace {
 
             console.warn('SOS responder reported refresh failure', {
               request_id: requestId,
-              requester: this.api.name,
+              requester: this.currentDeviceIdentity(),
               responder: responder.responder,
             });
           } catch (e) {
             console.warn('SOS responder request failed', {
               request_id: requestId,
-              requester: this.api.name,
+              requester: this.currentDeviceIdentity(),
               responder: responder.responder,
               err: e,
             });
@@ -292,7 +303,7 @@ export class Workspace {
   }
 
   private refreshReqName(responder: string, requestId: string): string {
-    return `${utils.normalizePath(this.api.group)}/root/32=REFRESH_REQ${utils.normalizePath(responder)}/${requestId}${utils.normalizePath(this.api.name)}`;
+    return `${utils.normalizePath(this.api.group)}/root/32=REFRESH_REQ${utils.normalizePath(responder)}/${requestId}${utils.normalizePath(this.currentDeviceIdentity())}`;
   }
 
   public async requestRefresh(requestId: string, responder: string): Promise<'ok' | 'fail'> {
@@ -351,7 +362,7 @@ export class Workspace {
     await this.proj.republishEncryptedState();
     console.log('finished workspace encrypted-state republish', {
       workspace: this.metadata.name,
-      responder: this.api.name,
+      responder: this.currentDeviceIdentity(),
     });
   }
 

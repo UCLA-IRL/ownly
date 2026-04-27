@@ -70,7 +70,7 @@ export interface WorkspaceAPI {
   /** Consume an NDN object with a name */
   consume(name: string): Promise<{ data: Uint8Array; name: string }>;
   /** Register a refresh request handler for SOS */
-  set_on_refresh_req(cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+  set_on_refresh_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
   /** Send a directed SOS refresh request Interest */
   send_refresh_req(name: string): Promise<'ok' | 'fail'>;
 

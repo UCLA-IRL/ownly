@@ -281,10 +281,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	}
 
 	// Watch for republish requests interests to republish Yjs Deltas
-	refreshReqPrefix := group.
-		Append(enc.NewGenericComponent("root")).
-		Append(enc.NewKeywordComponent("REFRESH_REQ")).
-		Append(idName...)
+	var refreshReqPrefix enc.Name
 
 	var workspaceJs map[string]any
 	workspaceJs = map[string]any{
@@ -344,8 +341,10 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// stop(): Promise<void>;
 		"stop": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			_ = a.engine.DetachHandler(refreshReqPrefix)
-			client.WithdrawPrefix(refreshReqPrefix, nil)
+			if len(refreshReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(refreshReqPrefix)
+				client.WithdrawPrefix(refreshReqPrefix, nil)
+			}
 
 			if err := client.Stop(); err != nil {
 				return nil, err
@@ -396,12 +395,28 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}), nil
 		}),
 
-		// set_on_refresh_req(cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+		// set_on_refresh_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
 		"set_on_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			cb := p[0]
+			responderName, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			cb := p[1]
 			if cb.Type() != js.TypeFunction {
 				return nil, fmt.Errorf("refresh request callback must be a function")
 			}
+
+			if len(refreshReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(refreshReqPrefix)
+				client.WithdrawPrefix(refreshReqPrefix, nil)
+			}
+
+			nextRefreshReqPrefix := group.
+				Append(enc.NewGenericComponent("root")).
+				Append(enc.NewKeywordComponent("REFRESH_REQ")).
+				Append(responderName...)
+
+			refreshReqPrefix = nextRefreshReqPrefix
 
 			if err := a.engine.AttachHandler(refreshReqPrefix, func(args ndn.InterestHandlerArgs) {
 				name := args.Interest.Name()
