@@ -4,7 +4,7 @@ import * as Y from 'yjs';
 import type { Router } from 'vue-router';
 import type { WorkspaceAPI, MlsRefPub } from '@/services/ndn';
 import type { SvsProvider } from '@/services/svs-provider';
-import type { IProfile, IWkspStats } from '@/services/types';
+import type { IOwnerDeviceRecord, IProfile, IWkspStats } from '@/services/types';
 import  { OpenMlsLiteClient, OpenMlsLiteGroup } from '@/services/openmls-lite';
 import { accountIdentityPrefix, encodeMlsIdentity, parseMlsIdentity } from '@/services/mls-identity';
 import { GlobalBus } from '@/services/event-bus';
@@ -14,10 +14,15 @@ const MLS_GROUP_ID_STATE_KEY = 'mls/group-id/v1';
 const MLS_RESET_SENTINEL = '__mls_reset__';
 const MLS_PREJOIN_SESSION_ID = 'prejoin';
 const MLS_COMMIT_BROADCAST = '__mls_commit_broadcast__';
+const OWNER_CONTROL_MAP = 'owner-control';
+const OWNER_MASTER_DEVICE_ID_KEY = 'masterDeviceId';
+const OWNER_DEVICES_MAP = 'owner-devices';
 type MlsSessionInfo = { groupIdHex: string; epoch: bigint };
 
 export class WorkspaceInviteManager {
   private readonly inviteeProfiles: Y.Map<IProfile>;
+  private readonly ownerControl: Y.Map<string>;
+  private readonly ownerDevices: Y.Map<IOwnerDeviceRecord>;
   private mlsClient: OpenMlsLiteClient | null = null;
   private mlsGroup: OpenMlsLiteGroup | null = null;
   private mlsInitPromise: Promise<void> | null = null;
@@ -26,6 +31,11 @@ export class WorkspaceInviteManager {
 
   // Deduplicate MLS publications delivered through live and snapshot paths.
   private readonly seenMlsPub: Set<string> = new Set();
+  private readonly ownerControlObserver = () => {
+    void this.syncMasterDeviceFlag().catch((e) => {
+      console.warn('Failed to sync master-device role from shared owner control', e);
+    });
+  };
 
   private constructor(
     private readonly api: WorkspaceAPI,
@@ -34,9 +44,13 @@ export class WorkspaceInviteManager {
     private readonly doc: Y.Doc,
   ) {
     this.inviteeProfiles = doc.getMap<IProfile>('invite-map');
+    this.ownerControl = doc.getMap<string>(OWNER_CONTROL_MAP);
+    this.ownerDevices = doc.getMap<IOwnerDeviceRecord>(OWNER_DEVICES_MAP);
 
-    // Add owner to the profiles
-    if (!this.inviteeProfiles.has(api.name) && this.wsmeta.owner) {
+    // Only seed the owner entry from a device that is already designated as
+    // master. A fresh owner follower must first join MLS and sync the real
+    // shared invite state.
+    if (!this.inviteeProfiles.has(api.name) && this.wsmeta.owner && this.wsmeta.isMasterDevice) {
       this.inviteeProfiles.set(api.name, { name: api.name, owner: true });
     }
   }
@@ -55,6 +69,7 @@ export class WorkspaceInviteManager {
       onMlsCommitRef: async (pubs) => mgr.onMlsCommitRefs(pubs),
     });
 
+    await mgr.initializeOwnerDeviceRole();
     await mgr.restoreMlsStateOnStartup();
 
     return mgr;
@@ -64,6 +79,7 @@ export class WorkspaceInviteManager {
    * Destroy the chat module
    */
   public async destroy() {
+    this.ownerControl.unobserve(this.ownerControlObserver);
     this.doc.destroy();
     this.mlsGroup?.free();
     this.mlsGroup = null;
@@ -75,14 +91,132 @@ export class WorkspaceInviteManager {
     this.onOwnerSessionAdvanced = cb;
   }
 
-  public isMasterDevice(): boolean {
-    return this.wsmeta.isMasterDevice ?? true;
+  private sharedMasterDeviceId(): string | undefined {
+    const masterDeviceId = this.ownerControl.get(OWNER_MASTER_DEVICE_ID_KEY);
+    const trimmed = masterDeviceId?.trim();
+    return trimmed ? trimmed : undefined;
   }
 
-  public async setIsMasterDevice(isMasterDevice: boolean): Promise<void> {
-    if (this.wsmeta.isMasterDevice === isMasterDevice) return;
-    this.wsmeta.isMasterDevice = isMasterDevice;
+  private defaultOwnerDeviceLabel(deviceId: string): string {
+    return `Device ${deviceId.slice(0, 8)}`;
+  }
+
+  private localOwnerDeviceRecord(now = Date.now()): IOwnerDeviceRecord {
+    if (!this.wsmeta.owner || !this.wsmeta.deviceId) {
+      throw new Error('Local device is not an owner device');
+    }
+
+    const existing = this.ownerDevices.get(this.wsmeta.deviceId);
+    return {
+      deviceId: this.wsmeta.deviceId,
+      label: existing?.label?.trim() || this.defaultOwnerDeviceLabel(this.wsmeta.deviceId),
+      registeredAt: existing?.registeredAt ?? now,
+    };
+  }
+
+  private upsertLocalOwnerDeviceRecord(now = Date.now()): void {
+    if (!this.wsmeta.owner || !this.wsmeta.deviceId) return;
+    this.ownerDevices.set(this.wsmeta.deviceId, this.localOwnerDeviceRecord(now));
+  }
+
+  private canRegisterLocalOwnerDeviceRecord(): boolean {
+    return !!this.wsmeta.owner &&
+      !!this.wsmeta.deviceId &&
+      (
+        this.wsmeta.isMasterDevice ||
+        this.wsmeta.mlsOwnerBootstrapped ||
+        !!this.wsmeta.mlsKeys?.length ||
+        !!this.mlsGroup
+      );
+  }
+
+  private maybeRegisterLocalOwnerDeviceRecord(now = Date.now()): void {
+    if (!this.canRegisterLocalOwnerDeviceRecord()) return;
+    this.upsertLocalOwnerDeviceRecord(now);
+  }
+
+  private async initializeOwnerDeviceRole(): Promise<void> {
+    if (!this.wsmeta.owner || !this.wsmeta.deviceId) {
+      await this.syncMasterDeviceFlag();
+      return;
+    }
+
+    this.ownerControl.observe(this.ownerControlObserver);
+    this.maybeRegisterLocalOwnerDeviceRecord();
+
+    if (!this.sharedMasterDeviceId() && this.wsmeta.isMasterDevice) {
+      this.ownerControl.set(OWNER_MASTER_DEVICE_ID_KEY, this.wsmeta.deviceId);
+    }
+
+    await this.syncMasterDeviceFlag();
+  }
+
+  private async syncMasterDeviceFlag(): Promise<void> {
+    const nextIsMaster =
+      !!this.wsmeta.owner &&
+      !!this.wsmeta.deviceId &&
+      this.sharedMasterDeviceId() === this.wsmeta.deviceId;
+
+    if (this.wsmeta.isMasterDevice === nextIsMaster) return;
+
+    this.wsmeta.isMasterDevice = nextIsMaster;
     await _o.stats.put(this.wsmeta.name, this.wsmeta);
+  }
+
+  public isMasterDevice(): boolean {
+    return !!this.wsmeta.owner &&
+      !!this.wsmeta.deviceId &&
+      this.sharedMasterDeviceId() === this.wsmeta.deviceId;
+  }
+
+  public getMasterOwnerDevice(): IOwnerDeviceRecord | undefined {
+    const masterDeviceId = this.sharedMasterDeviceId();
+    return masterDeviceId ? this.ownerDevices.get(masterDeviceId) : undefined;
+  }
+
+  public getOwnerDevices(): IOwnerDeviceRecord[] {
+    return Array
+      .from(this.ownerDevices.values())
+      .sort((a, b) => a.registeredAt - b.registeredAt || a.deviceId.localeCompare(b.deviceId));
+  }
+
+  public async setOwnerDeviceLabel(deviceId: string, label: string): Promise<void> {
+    if (!this.wsmeta.owner) {
+      throw new Error('Only owner devices can rename registered owner devices');
+    }
+
+    const existing = this.ownerDevices.get(deviceId);
+    if (!existing) {
+      throw new Error(`Owner device ${deviceId} is not registered`);
+    }
+
+    const trimmedLabel = label.trim();
+    this.ownerDevices.set(deviceId, {
+      ...existing,
+      label: trimmedLabel || this.defaultOwnerDeviceLabel(deviceId),
+    });
+  }
+
+  public async transferMasterRole(deviceId: string): Promise<void> {
+    if (!this.wsmeta.owner || !this.wsmeta.deviceId || !this.isMasterDevice()) {
+      throw new Error('Only the current master owner device can transfer control');
+    }
+
+    const targetDeviceId = deviceId.trim();
+    if (!targetDeviceId) {
+      throw new Error('Missing target owner device ID');
+    }
+    if (targetDeviceId === this.wsmeta.deviceId) {
+      return;
+    }
+
+    const target = this.ownerDevices.get(targetDeviceId);
+    if (!target) {
+      throw new Error(`Owner device ${targetDeviceId} is not registered`);
+    }
+
+    this.ownerControl.set(OWNER_MASTER_DEVICE_ID_KEY, targetDeviceId);
+    await this.syncMasterDeviceFlag();
   }
 
   private assertOwnerCanMergeMls(action: string): void {
@@ -92,7 +226,7 @@ export class WorkspaceInviteManager {
   }
 
   private async notifyOwnerSessionAdvanced(sessionId: string): Promise<void> {
-    if (!this.wsmeta.owner || !this.onOwnerSessionAdvanced) return;
+    if (!this.wsmeta.owner || !this.isMasterDevice() || !this.onOwnerSessionAdvanced) return;
     await this.onOwnerSessionAdvanced(sessionId);
   }
 
@@ -270,7 +404,7 @@ export class WorkspaceInviteManager {
     await this.restoreLegacyWorkspaceKey();
     await _o.stats.put(this.wsmeta.name, this.wsmeta);
 
-    if (!this.wsmeta.owner) {
+    if (!this.wsmeta.owner || !this.isMasterDevice()) {
       try {
         await this.requestMlsJoin();
       } catch (e) {
@@ -324,10 +458,11 @@ export class WorkspaceInviteManager {
     await this.rotateWorkspaceMlsKey();
     await this.drainPendingCommitRefs();
 
-    if (this.wsmeta.owner && !this.wsmeta.mlsOwnerBootstrapped) {
+    if (this.wsmeta.owner && this.isMasterDevice() && !this.wsmeta.mlsOwnerBootstrapped) {
       this.wsmeta.mlsOwnerBootstrapped = true;
       await _o.stats.put(this.wsmeta.name, this.wsmeta);
     }
+    this.maybeRegisterLocalOwnerDeviceRecord();
     return true;
   }
 
@@ -369,11 +504,11 @@ export class WorkspaceInviteManager {
   private async restoreMlsStateOnStartup(): Promise<void> {
     try {
       const restored = await this.restoreMlsStateIfAvailable();
-      if (!restored && this.wsmeta.owner && this.wsmeta.mlsOwnerBootstrapped) {
+      if (!restored && this.wsmeta.owner && this.isMasterDevice() && this.wsmeta.mlsOwnerBootstrapped) {
         throw new Error('Owner MLS restore failed: missing persisted state');
       }
     } catch (e) {
-      if (this.wsmeta.owner && this.wsmeta.mlsOwnerBootstrapped) {
+      if (this.wsmeta.owner && this.isMasterDevice() && this.wsmeta.mlsOwnerBootstrapped) {
         throw e;
       }
       console.warn('MLS restore failed; resetting join request flags', e);
@@ -384,16 +519,16 @@ export class WorkspaceInviteManager {
   }
 
   /**
-   * Get MLS group instance, only owner can create it
+   * Get the merge-capable owner MLS group instance.
    */
   private async getMlsGroup(): Promise<OpenMlsLiteGroup> {
-      if (!this.wsmeta.owner) {
-        throw new Error('Only workspace owner can use owner MLS group');
-      }
-      if (!this.mlsGroup) {
-        throw new Error('Owner MLS group not initialized. Call bootstrapOwnerMls() first.');
-      }
-      return this.mlsGroup;
+    if (!this.wsmeta.owner || !this.isMasterDevice()) {
+      throw new Error('Only the master owner device can use the owner MLS group');
+    }
+    if (!this.mlsGroup) {
+      throw new Error('Owner MLS group not initialized. Call bootstrapOwnerMls() first.');
+    }
+    return this.mlsGroup;
   }
 
   /**
@@ -407,6 +542,7 @@ export class WorkspaceInviteManager {
     this.mlsGroup = client.joinFromWelcome(welcome); // welcome-only first
     await this.rotateWorkspaceMlsKey(sessionId);
     await this.drainPendingCommitRefs();
+    this.maybeRegisterLocalOwnerDeviceRecord();
   }
 
   /**
@@ -465,11 +601,11 @@ export class WorkspaceInviteManager {
   private async onMlsCommitRefs(pubs: MlsRefPub[]): Promise<void> {
     for (const pub of this.uniqueOrdered(pubs)) {
       if (this.isResetPub(pub)) {
-        if (this.wsmeta.owner && pub.publisher === this.api.name) continue;
+        if (this.wsmeta.owner && this.isMasterDevice() && pub.publisher === this.api.name) continue;
         await this.resetLocalMlsState(`remote group reset from ${pub.publisher}`);
         continue;
       }
-      if (this.wsmeta.owner) continue;            // owner already merged pending
+      if (this.wsmeta.owner && this.isMasterDevice()) continue; // master owner already merged pending
       if (pub.invitee === this.api.name) {
         if (this.mlsGroup || this.wsmeta.mlsKeys?.length) {
           await this.revokeLocalWorkspaceAccess(`removed from MLS group by ${pub.publisher}`);
@@ -513,8 +649,8 @@ export class WorkspaceInviteManager {
   }
 
   public async requestMlsJoin(): Promise<void> {
-    if (this.wsmeta.owner) {
-      throw new Error('Owner does not request MLS join via key package');
+    if (this.wsmeta.owner && this.isMasterDevice()) {
+      throw new Error('Master owner device does not request MLS join via key package');
     }
 
     try {
@@ -634,6 +770,7 @@ export class WorkspaceInviteManager {
 
         this.wsmeta.mlsOwnerBootstrapped = true;
         await _o.stats.put(this.wsmeta.name, this.wsmeta);
+        this.maybeRegisterLocalOwnerDeviceRecord();
         await this.notifyOwnerSessionAdvanced(sessionId);
       })();
     }

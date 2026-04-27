@@ -21,7 +21,7 @@
       <span v-if="workspaces.length == 0">Join or create workspaces before inviting users.</span>
 
       <template v-else v-for="ws in workspaces" :key="ws.name">
-        <div class="wksp p-2" @click="invite(ws)">
+        <div class="wksp p-2" :class="{ disabled: !canInviteInto(ws) }" @click="canInviteInto(ws) && invite(ws)">
           <p class="has-text-weight-bold">{{ ws.label }}</p>
           <p>{{ ws.name }}</p>
         </div>
@@ -87,8 +87,8 @@ async function create() {
 
 async function invite(ws: IWkspStats) {
   try {
-    if (!ws.owner) {
-      throw new Error('You do not have permission to invite users to this workspace');
+    if (!canInviteInto(ws)) {
+      throw new Error('You do not have permission to invite users to this workspace from this device');
     }
 
     const wksp = await Workspace.setup(ws.name);
@@ -103,6 +103,10 @@ async function invite(ws: IWkspStats) {
     console.error(e);
     Toast.error(`Failed to invite user: ${e}`);
   }
+}
+
+function canInviteInto(ws: IWkspStats): boolean {
+  return ws.owner && (ws.isMasterDevice ?? true);
 }
 
 function close() {
@@ -122,6 +126,15 @@ function close() {
     border-radius: 4px;
     &:hover {
       background-color: rgba(255, 255, 255, 0.15);
+    }
+
+    &.disabled {
+      cursor: default;
+      opacity: 0.55;
+
+      &:hover {
+        background-color: transparent;
+      }
     }
   }
 }

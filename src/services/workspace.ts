@@ -94,7 +94,7 @@ export class Workspace {
       const invite = await WorkspaceInviteManager.create(api, metadata, provider);
       
       const shouldRequestMls =
-        !metadata.owner &&
+        !(metadata.owner && metadata.isMasterDevice) &&
         !(metadata.mlsKeys?.length) &&
         (
           !metadata.mlsJoinRequested ||
@@ -498,7 +498,7 @@ export class Workspace {
       pendingSetup: create ? true : undefined,
       revoked: undefined,
       deviceId: globalThis.crypto.randomUUID(),
-      isMasterDevice: true,
+      isMasterDevice: create && isOwner,
       psk: utils.toHex(psk),
       dsk: dsk ? utils.toHex(dsk) : null,
     });
@@ -558,7 +558,7 @@ export class Workspace {
     }
 
     if (metadata.isMasterDevice === undefined) {
-      metadata.isMasterDevice = true;
+      metadata.isMasterDevice = false;
       changed = true;
     }
 

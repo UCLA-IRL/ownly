@@ -16,7 +16,7 @@
 
     <div class="field mt-2">
       <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
-        :disabled="!isOwner" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste" autofocus />
+        :disabled="!canManageMembers" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste" autofocus />
     </div>
 
     <div class="invitee-management">
@@ -44,11 +44,11 @@
 
                   <div class="email" v-if="item.email">{{ item.email }}</div>
                 </div>
-                <button class="button invitee-list-action"
+                <button class="button invitee-list-action" :disabled="!canManageMembers"
                   @click="acceptRequest(item)" title="Accept">
                   <FontAwesomeIcon :icon="faCheck" />
                 </button>
-                <button class="button invitee-list-action"
+                <button class="button invitee-list-action" :disabled="!canManageMembers"
                   @click="denyRequest(item)" title="Deny">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
@@ -60,7 +60,7 @@
       <div class="title is-6 mb-4">
         People with Access to this Workspace ({{ invitees.length }}<span v-if="pendingInvitees.length > 0"> + {{
           pendingInvitees.length }}</span>)
-        <button class="button invitee-list-action" @click="pasteInviteeList"
+        <button class="button invitee-list-action" :disabled="!canManageMembers" @click="pasteInviteeList"
           title="Import invitee profiles from clipboard">
           <FontAwesomeIcon :icon="faClipboard" />
         </button>
@@ -104,7 +104,7 @@
                   @click="removeInvitee(item.name)" title="Remove this pending invitee">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
-                <button class="button invitee-list-action" v-else-if="isOwner && !item.owner"
+                <button class="button invitee-list-action" v-else-if="canManageMembers && !item.owner"
                   :disabled="removingMember === item.name"
                   @click="removeExistingMember(item.name)" title="Remove this member from the workspace">
                   <FontAwesomeIcon :icon="faUserMinus" />
@@ -119,15 +119,15 @@
       </DynamicScroller>
     </div>
 
-    <p v-if="!isOwner" class="has-text-danger has-text-weight-semibold mt-2">
-      You must be the owner of the workspace to invite people
+    <p v-if="!canManageMembers" class="has-text-danger has-text-weight-semibold mt-2">
+      You must use the master owner device to invite or remove members
     </p>
 
     <div class="field has-text-right mt-2">
       <div class="control">
         <button class="button mr-2" @click="emit('close')">Cancel</button>
         <button class="button is-primary soft-if-dark mr-2" @click="send"
-          :disabled="!isOwner || pendingInvitees.length == 0">
+          :disabled="!canManageMembers || pendingInvitees.length == 0">
           Invite
         </button>
       </div>
@@ -171,7 +171,9 @@ const scroller = useTemplateRef<typeof DynamicScroller>('scroller');
 const wksp = shallowRef<Workspace | null>(null);
 const inviteLink = ref(String());
 const inviteInput = ref(String())
-const isOwner = computed(() => !!wksp.value?.metadata.owner);
+const canManageMembers = computed(() =>
+  !!wksp.value?.metadata.owner && !!wksp.value?.invite.isMasterDevice(),
+);
 const members = ref([] as string[]);
 const invitees = ref([] as IProfile[]);
 const pendingInvitees = ref([] as IProfile[]);
@@ -254,8 +256,8 @@ function removeInvitee(name: string) {
 
 async function removeExistingMember(name: string) {
   if (!wksp.value) return;
-  if (!wksp.value.metadata.owner) {
-    Toast.error('Only the workspace owner can remove members');
+  if (!canManageMembers.value) {
+    Toast.error('Only the master owner device can remove members');
     return;
   }
   if (!globalThis.confirm(`Remove ${name} from this workspace?`)) return;
@@ -397,6 +399,10 @@ function addRequest(invitee: string) {
 async function acceptRequest(invitee: IProfile) {
   console.log(invitee);
   if (!wksp.value) return;
+  if (!canManageMembers.value) {
+    Toast.error('Only the master owner device can invite members');
+    return;
+  }
 
   // Remove from local list to prevent accidental duplicates, and mark in global list as already dealt with
   console.log(_access_requests)
@@ -422,6 +428,10 @@ async function acceptRequest(invitee: IProfile) {
 
 function denyRequest(invitee: IProfile) {
   if (!wksp.value) return;
+  if (!canManageMembers.value) {
+    Toast.error('Only the master owner device can manage access requests');
+    return;
+  }
 
   // Remove from local list to prevent accidental duplicates, and mark in global list as already dealt with
   console.log(_access_requests)
@@ -434,6 +444,10 @@ function denyRequest(invitee: IProfile) {
 // Sign the invitations and send them to the server
 async function send() {
   if (!wksp.value) return;
+  if (!canManageMembers.value) {
+    Toast.error('Only the master owner device can invite members');
+    return;
+  }
 
   // Publish invitations
   for (const invitee of pendingInvitees.value) {

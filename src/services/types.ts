@@ -38,6 +38,12 @@ export type IWkspStats = {
   mlsKeys?: IMlsKey[];
 };
 
+export type IOwnerDeviceRecord = {
+  deviceId: string;
+  label: string;
+  registeredAt: number;
+};
+
 export type IChatMessage = {
   /** Unique ID for each message */
   uuid: string;

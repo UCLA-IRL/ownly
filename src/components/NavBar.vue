@@ -139,16 +139,66 @@
             </a>
           </li>
           <li v-if="showAdvancedSettings">
+            <a :class="{ 'is-disabled': isRequestingSOS }" @click="sosRequest">
+              <FontAwesomeIcon class="mr-1" :icon="faCircleExclamation" size="sm" />
+              {{ isRequestingSOS ? 'Broadcasting SOS...' : 'SOS' }}
+            </a>
+          </li>
+          <li v-if="showAdvancedSettings">
             <a :class="{ 'is-disabled': isResettingMls }" @click="resetMlsState">
               <FontAwesomeIcon class="mr-1" :icon="faArrowsRotate" size="sm" />
               {{ isResettingMls ? 'Resetting MLS...' : 'Reset MLS State' }}
             </a>
           </li>
-          <li v-if="showAdvancedSettings">
-            <a :class="{ 'is-disabled': isRequestingSOS }" @click="sosRequest">
-              <FontAwesomeIcon class="mr-1" :icon="faCircleExclamation" size="sm" />
-              {{ isRequestingSOS ? 'Broadcasting SOS...' : 'SOS' }}
-            </a>
+          <li v-if="showAdvancedSettings && currentWorkspaceIsOwner">
+            <div class="owner-device-panel">
+              <div class="owner-device-header">Owner devices</div>
+              <div v-if="ownerDevices.length" class="owner-device-list">
+                <div
+                  v-for="device in ownerDevices"
+                  :key="device.deviceId"
+                  class="owner-device-row"
+                >
+                  <div class="owner-device-meta">
+                    <div class="owner-device-label">{{ device.label }}</div>
+                    <div class="owner-device-subtitle" :title="device.deviceId">
+                      {{ device.deviceId }}
+                    </div>
+                    <div class="owner-device-badges">
+                      <span v-if="isMasterOwnerDevice(device)" class="owner-device-badge">
+                        Master
+                      </span>
+                      <span v-if="isLocalOwnerDevice(device)" class="owner-device-badge subtle">
+                        This device
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="owner-device-actions">
+                    <button class="owner-device-action" type="button" @click="renameOwnerDevice(device)">
+                      Rename
+                    </button>
+                    <button
+                      v-if="!isMasterOwnerDevice(device)"
+                      class="owner-device-action"
+                      type="button"
+                      :disabled="transferringMasterDeviceId === device.deviceId || !canCurrentWorkspaceManageMls()"
+                      @click="transferMasterToDevice(device)"
+                    >
+                      {{
+                        transferringMasterDeviceId === device.deviceId
+                          ? 'Transferring...'
+                          : 'Make Master'
+                      }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="owner-device-empty">No owner devices registered yet.</div>
+              <div v-if="!canCurrentWorkspaceManageMls()" class="owner-device-note">
+                Only the current master owner device can transfer control.
+              </div>
+            </div>
           </li>
         </ul>
       </template>
@@ -223,7 +273,7 @@ import { GlobalBus } from '@/services/event-bus';
 import { Toast } from '@/utils/toast';
 //import { Workspace } from '@/services/workspace';
 
-import type { IChatChannel, IProject, IProjectFile } from '@/services/types';
+import type { IChatChannel, IOwnerDeviceRecord, IProject, IProjectFile } from '@/services/types';
 import InvitePeopleModal from './InvitePeopleModal.vue';
 import QRIdentityModal from './QRIdentityModal.vue';
 
@@ -245,6 +295,11 @@ const showAgentModal = ref(false);
 const showAdvancedSettings = ref(false);
 const isResettingMls = ref(false);
 const isRequestingSOS = ref(false);
+const ownerDevices = ref([] as IOwnerDeviceRecord[]);
+const currentWorkspaceIsOwner = ref(false);
+const localOwnerDeviceId = ref(null as string | null);
+const masterOwnerDeviceId = ref(null as string | null);
+const transferringMasterDeviceId = ref(null as string | null);
 
 // vue-tsc chokes on this type inference
 const projectTree = useTemplateRef<Array<InstanceType<typeof ProjectTree>>>('projectTree');
@@ -316,6 +371,7 @@ onMounted(async () => {
   GlobalBus.addListener('conn-change', busListeners['conn-change']);
   interval = setInterval(() => {
     setNotification();
+    syncOwnerDevices();
   },
   250);
 
@@ -466,6 +522,82 @@ function setNotification() {
     showNotifBubble.value = false;
 }
 
+function syncOwnerDevices() {
+  const wksp = globalThis.ActiveWorkspace;
+  currentWorkspaceIsOwner.value = !!wksp?.metadata.owner;
+  localOwnerDeviceId.value = wksp?.metadata.deviceId ?? null;
+
+  if (!wksp?.metadata.owner || !showAdvancedSettings.value) {
+    ownerDevices.value = [];
+    masterOwnerDeviceId.value = null;
+    return;
+  }
+
+  ownerDevices.value = wksp.invite.getOwnerDevices();
+  masterOwnerDeviceId.value = wksp.invite.getMasterOwnerDevice()?.deviceId ?? null;
+}
+
+function canCurrentWorkspaceManageMls(): boolean {
+  const wksp = globalThis.ActiveWorkspace;
+  return !!wksp?.metadata.owner && wksp.invite.isMasterDevice();
+}
+
+function isMasterOwnerDevice(device: IOwnerDeviceRecord): boolean {
+  return device.deviceId === masterOwnerDeviceId.value;
+}
+
+function isLocalOwnerDevice(device: IOwnerDeviceRecord): boolean {
+  return device.deviceId === localOwnerDeviceId.value;
+}
+
+async function renameOwnerDevice(device: IOwnerDeviceRecord) {
+  const wksp = globalThis.ActiveWorkspace;
+  if (!wksp?.metadata.owner) {
+    Toast.error('Only owner devices can rename registered owner devices');
+    return;
+  }
+
+  const nextLabel = globalThis.prompt('Rename owner device', device.label);
+  if (nextLabel === null) return;
+
+  const progress = Toast.loading(`Renaming ${device.label}...`);
+  try {
+    await wksp.invite.setOwnerDeviceLabel(device.deviceId, nextLabel);
+    syncOwnerDevices();
+    await progress.success('Owner device label updated');
+  } catch (err) {
+    await progress.error(`Failed to update owner device label: ${err}`);
+  }
+}
+
+async function transferMasterToDevice(device: IOwnerDeviceRecord) {
+  const wksp = globalThis.ActiveWorkspace;
+  if (!wksp) {
+    Toast.error('No active workspace');
+    return;
+  }
+  if (!canCurrentWorkspaceManageMls()) {
+    Toast.error('Only the current master owner device can transfer control');
+    return;
+  }
+  if (transferringMasterDeviceId.value) return;
+  if (!globalThis.confirm(`Transfer master control to ${device.label}?`)) {
+    return;
+  }
+
+  transferringMasterDeviceId.value = device.deviceId;
+  const progress = Toast.loading(`Transferring master control to ${device.label}...`);
+  try {
+    await wksp.invite.transferMasterRole(device.deviceId);
+    syncOwnerDevices();
+    await progress.success(`Master control transferred to ${device.label}`);
+  } catch (err) {
+    await progress.error(`Failed to transfer master control: ${err}`);
+  } finally {
+    transferringMasterDeviceId.value = null;
+  }
+}
+
 async function sosRequest() {
   if (isRequestingSOS.value) return;
 
@@ -495,8 +627,8 @@ async function resetMlsState() {
     Toast.error('No active workspace');
     return;
   }
-  if (!wksp.metadata.owner) {
-    Toast.error('Only the workspace owner can reset MLS state');
+  if (!canCurrentWorkspaceManageMls()) {
+    Toast.error('Only the master owner device can reset MLS state');
     return;
   }
   if (!globalThis.confirm('Reset the MLS state machine for the entire workspace? This will force all members to re-establish MLS state.')) {
@@ -642,6 +774,112 @@ async function resetMlsState() {
 
   .menu-label {
     color: #bbb;
+  }
+
+  .owner-device-panel {
+    margin-top: 6px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .owner-device-header {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.74);
+  }
+
+  .owner-device-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .owner-device-row {
+    padding: 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .owner-device-meta {
+    min-width: 0;
+  }
+
+  .owner-device-label {
+    color: white;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .owner-device-subtitle {
+    margin-top: 4px;
+    font-size: 0.76rem;
+    color: rgba(255, 255, 255, 0.62);
+    word-break: break-all;
+  }
+
+  .owner-device-badges {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .owner-device-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: white;
+    background: rgba(255, 255, 255, 0.18);
+  }
+
+  .owner-device-badge.subtle {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .owner-device-actions {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .owner-device-action {
+    border: none;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: white;
+    background: rgba(255, 255, 255, 0.12);
+    cursor: pointer;
+    transition: background-color 0.2s ease, opacity 0.2s ease;
+
+    &:hover:enabled {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    &:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+  }
+
+  .owner-device-empty,
+  .owner-device-note {
+    margin-top: 10px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.68);
+    line-height: 1.35;
   }
 
   :deep(li > a) {
