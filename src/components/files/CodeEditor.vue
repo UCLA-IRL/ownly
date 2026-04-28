@@ -14,6 +14,7 @@ import { MonacoBinding } from 'y-monaco';
 import type { Awareness } from 'y-protocols/awareness.js';
 
 import * as utils from '@/utils';
+import { useThemeWatch } from '@/utils';
 import { monacoRegister } from '@/utils/monaco';
 
 self.MonacoEnvironment = {
@@ -42,6 +43,7 @@ const outer = useTemplateRef('outer');
 
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
 let ybinding: MonacoBinding | null = null;
+let unwatchTheme: (() => void) | null = null;
 
 watch(
   () => props.ytext,
@@ -88,6 +90,9 @@ function create() {
     padding: { top: 20, bottom: 10 },
   });
 
+  applyEditorTheme();
+  unwatchTheme = useThemeWatch(applyEditorTheme);
+
   ybinding = new MonacoBinding(
     props.ytext,
     editor!.getModel()!,
@@ -97,9 +102,15 @@ function create() {
 }
 
 function destroy() {
+  unwatchTheme?.();
+  unwatchTheme = null;
   ybinding?.destroy();
   editor?.getModel()?.dispose();
   editor?.dispose();
+}
+
+function applyEditorTheme() {
+  monaco.editor.setTheme(utils.themeIsDark() ? 'vs-dark' : 'vs');
 }
 </script>
 

@@ -1,0 +1,81 @@
+@mixin truncate-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+@mixin row-shell($height: 30px) {
+  display: flex;
+  align-items: center;
+  min-height: $height;
+  margin: 1px 0;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+@mixin row-hit($height: 30px, $padX: 8px) {
+  flex: 1;
+  min-width: 0;
+  min-height: calc($height - 2px);
+  padding: 0 $padX;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+@mixin row-action($size: 20px) {
+  width: $size;
+  height: $size;
+  margin: 0 4px 0 0;
+  padding: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: none;
+  color: inherit;
+  background-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+// Legacy selectors used by NavBar links
+li > a,
+:deep(.link-inner) {
+  @include truncate-label;
+}
+
+li > a:has(div.link-inner) {
+  --nav-row-height: 30px;
+  --nav-item-pad-x: 8px;
+  --nav-action-size: 20px;
+
+  padding: 0;
+  min-height: var(--nav-row-height);
+  align-items: center;
+
+  position: relative;
+  display: flex;
+  flex-direction: row;
+
+  div.link-inner {
+    min-height: var(--nav-row-height);
+    padding: 0 var(--nav-item-pad-x);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+  }
+
+  .link-button {
+    @include row-action(var(--nav-action-size));
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.25) !important;
+    }
+  }
+}

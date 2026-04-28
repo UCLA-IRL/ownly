@@ -15,6 +15,13 @@
     <meta name="theme-color" content="#673ab7" media="(prefers-color-scheme: dark)" />
   </head>
   <body>
+    <script>
+      // Apply saved theme before first paint to prevent flash
+      (function() {
+        try { var t = localStorage.getItem('ownly.theme'); } catch(e) { return; }
+        if (t) document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
     <script src="/wasm_exec.js"></script>

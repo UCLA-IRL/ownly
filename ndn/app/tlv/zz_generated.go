@@ -12,21 +12,27 @@ import (
 type MessageEncoder struct {
 	Length uint
 
-	AeadBlock_encoder   AeadBlockEncoder
-	YjsDelta_encoder    YjsDeltaEncoder
-	DSKRequest_encoder  DSKRequestEncoder
-	DSKResponse_encoder DSKResponseEncoder
-	DSKACK_encoder      DSKACKEncoder
-	BootJoin_encoder    BootJoinEncoder
+	AeadBlock_encoder      AeadBlockEncoder
+	YjsDelta_encoder       YjsDeltaEncoder
+	DSKRequest_encoder     DSKRequestEncoder
+	DSKResponse_encoder    DSKResponseEncoder
+	DSKACK_encoder         DSKACKEncoder
+	RefreshPing_encoder    RefreshPingEncoder
+	RefreshAck_encoder     RefreshAckEncoder
+	RefreshRequest_encoder RefreshRequestEncoder
+	BootJoin_encoder       BootJoinEncoder
 }
 
 type MessageParsingContext struct {
-	AeadBlock_context   AeadBlockParsingContext
-	YjsDelta_context    YjsDeltaParsingContext
-	DSKRequest_context  DSKRequestParsingContext
-	DSKResponse_context DSKResponseParsingContext
-	DSKACK_context      DSKACKParsingContext
-	BootJoin_context    BootJoinParsingContext
+	AeadBlock_context      AeadBlockParsingContext
+	YjsDelta_context       YjsDeltaParsingContext
+	DSKRequest_context     DSKRequestParsingContext
+	DSKResponse_context    DSKResponseParsingContext
+	DSKACK_context         DSKACKParsingContext
+	RefreshPing_context    RefreshPingParsingContext
+	RefreshAck_context     RefreshAckParsingContext
+	RefreshRequest_context RefreshRequestParsingContext
+	BootJoin_context       BootJoinParsingContext
 }
 
 func (encoder *MessageEncoder) Init(value *Message) {
@@ -44,6 +50,15 @@ func (encoder *MessageEncoder) Init(value *Message) {
 	}
 	if value.DSKACK != nil {
 		encoder.DSKACK_encoder.Init(value.DSKACK)
+	}
+	if value.RefreshPing != nil {
+		encoder.RefreshPing_encoder.Init(value.RefreshPing)
+	}
+	if value.RefreshAck != nil {
+		encoder.RefreshAck_encoder.Init(value.RefreshAck)
+	}
+	if value.RefreshRequest != nil {
+		encoder.RefreshRequest_encoder.Init(value.RefreshRequest)
 	}
 	if value.BootJoin != nil {
 		encoder.BootJoin_encoder.Init(value.BootJoin)
@@ -75,6 +90,21 @@ func (encoder *MessageEncoder) Init(value *Message) {
 		l += uint(enc.TLNum(encoder.DSKACK_encoder.Length).EncodingLength())
 		l += encoder.DSKACK_encoder.Length
 	}
+	if value.RefreshPing != nil {
+		l += 1
+		l += uint(enc.TLNum(encoder.RefreshPing_encoder.Length).EncodingLength())
+		l += encoder.RefreshPing_encoder.Length
+	}
+	if value.RefreshAck != nil {
+		l += 1
+		l += uint(enc.TLNum(encoder.RefreshAck_encoder.Length).EncodingLength())
+		l += encoder.RefreshAck_encoder.Length
+	}
+	if value.RefreshRequest != nil {
+		l += 1
+		l += uint(enc.TLNum(encoder.RefreshRequest_encoder.Length).EncodingLength())
+		l += encoder.RefreshRequest_encoder.Length
+	}
 	if value.BootJoin != nil {
 		l += 1
 		l += uint(enc.TLNum(encoder.BootJoin_encoder.Length).EncodingLength())
@@ -90,6 +120,9 @@ func (context *MessageParsingContext) Init() {
 	context.DSKRequest_context.Init()
 	context.DSKResponse_context.Init()
 	context.DSKACK_context.Init()
+	context.RefreshPing_context.Init()
+	context.RefreshAck_context.Init()
+	context.RefreshRequest_context.Init()
 	context.BootJoin_context.Init()
 }
 
@@ -142,8 +175,35 @@ func (encoder *MessageEncoder) EncodeInto(value *Message, buf []byte) {
 			pos += encoder.DSKACK_encoder.Length
 		}
 	}
-	if value.BootJoin != nil {
+	if value.RefreshPing != nil {
 		buf[pos] = byte(208)
+		pos += 1
+		pos += uint(enc.TLNum(encoder.RefreshPing_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.RefreshPing_encoder.Length > 0 {
+			encoder.RefreshPing_encoder.EncodeInto(value.RefreshPing, buf[pos:])
+			pos += encoder.RefreshPing_encoder.Length
+		}
+	}
+	if value.RefreshAck != nil {
+		buf[pos] = byte(210)
+		pos += 1
+		pos += uint(enc.TLNum(encoder.RefreshAck_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.RefreshAck_encoder.Length > 0 {
+			encoder.RefreshAck_encoder.EncodeInto(value.RefreshAck, buf[pos:])
+			pos += encoder.RefreshAck_encoder.Length
+		}
+	}
+	if value.RefreshRequest != nil {
+		buf[pos] = byte(212)
+		pos += 1
+		pos += uint(enc.TLNum(encoder.RefreshRequest_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.RefreshRequest_encoder.Length > 0 {
+			encoder.RefreshRequest_encoder.EncodeInto(value.RefreshRequest, buf[pos:])
+			pos += encoder.RefreshRequest_encoder.Length
+		}
+	}
+	if value.BootJoin != nil {
+		buf[pos] = byte(214)
 		pos += 1
 		pos += uint(enc.TLNum(encoder.BootJoin_encoder.Length).EncodeInto(buf[pos:]))
 		if encoder.BootJoin_encoder.Length > 0 {
@@ -170,6 +230,9 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	var handled_DSKRequest bool = false
 	var handled_DSKResponse bool = false
 	var handled_DSKACK bool = false
+	var handled_RefreshPing bool = false
+	var handled_RefreshAck bool = false
+	var handled_RefreshRequest bool = false
 	var handled_BootJoin bool = false
 
 	progress := -1
@@ -230,6 +293,24 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 			case 208:
 				if true {
 					handled = true
+					handled_RefreshPing = true
+					value.RefreshPing, err = context.RefreshPing_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
+			case 210:
+				if true {
+					handled = true
+					handled_RefreshAck = true
+					value.RefreshAck, err = context.RefreshAck_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
+			case 212:
+				if true {
+					handled = true
+					handled_RefreshRequest = true
+					value.RefreshRequest, err = context.RefreshRequest_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
+			case 214:
+				if true {
+					handled = true
 					handled_BootJoin = true
 					value.BootJoin, err = context.BootJoin_context.Parse(reader.Delegate(int(l)), ignoreCritical)
 				}
@@ -265,6 +346,15 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	}
 	if !handled_DSKACK && err == nil {
 		value.DSKACK = nil
+	}
+	if !handled_RefreshPing && err == nil {
+		value.RefreshPing = nil
+	}
+	if !handled_RefreshAck && err == nil {
+		value.RefreshAck = nil
+	}
+	if !handled_RefreshRequest && err == nil {
+		value.RefreshRequest = nil
 	}
 	if !handled_BootJoin && err == nil {
 		value.BootJoin = nil
@@ -1031,6 +1121,624 @@ func (value *DSKACK) Bytes() []byte {
 
 func ParseDSKACK(reader enc.WireView, ignoreCritical bool) (*DSKACK, error) {
 	context := DSKACKParsingContext{}
+	context.Init()
+	return context.Parse(reader, ignoreCritical)
+}
+
+type RefreshPingEncoder struct {
+	Length uint
+}
+
+type RefreshPingParsingContext struct {
+}
+
+func (encoder *RefreshPingEncoder) Init(value *RefreshPing) {
+
+	l := uint(0)
+	l += 3
+	l += uint(enc.TLNum(len(value.RequestId)).EncodingLength())
+	l += uint(len(value.RequestId))
+	l += 3
+	l += uint(enc.TLNum(len(value.Requester)).EncodingLength())
+	l += uint(len(value.Requester))
+	l += 3
+	l += uint(enc.TLNum(len(value.SentAt)).EncodingLength())
+	l += uint(len(value.SentAt))
+	encoder.Length = l
+
+}
+
+func (context *RefreshPingParsingContext) Init() {
+
+}
+
+func (encoder *RefreshPingEncoder) EncodeInto(value *RefreshPing, buf []byte) {
+
+	pos := uint(0)
+
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1440))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.RequestId)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.RequestId)
+	pos += uint(len(value.RequestId))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1442))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.Requester)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.Requester)
+	pos += uint(len(value.Requester))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1444))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.SentAt)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.SentAt)
+	pos += uint(len(value.SentAt))
+}
+
+func (encoder *RefreshPingEncoder) Encode(value *RefreshPing) enc.Wire {
+
+	wire := make(enc.Wire, 1)
+	wire[0] = make([]byte, encoder.Length)
+	buf := wire[0]
+	encoder.EncodeInto(value, buf)
+
+	return wire
+}
+
+func (context *RefreshPingParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*RefreshPing, error) {
+
+	var handled_RequestId bool = false
+	var handled_Requester bool = false
+	var handled_SentAt bool = false
+
+	progress := -1
+	_ = progress
+
+	value := &RefreshPing{}
+	var err error
+	var startPos int
+	for {
+		startPos = reader.Pos()
+		if startPos >= reader.Length() {
+			break
+		}
+		typ := enc.TLNum(0)
+		l := enc.TLNum(0)
+		typ, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+		l, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+
+		err = nil
+		if handled := false; true {
+			switch typ {
+			case 1440:
+				if true {
+					handled = true
+					handled_RequestId = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.RequestId = builder.String()
+						}
+					}
+				}
+			case 1442:
+				if true {
+					handled = true
+					handled_Requester = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.Requester = builder.String()
+						}
+					}
+				}
+			case 1444:
+				if true {
+					handled = true
+					handled_SentAt = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.SentAt = builder.String()
+						}
+					}
+				}
+			default:
+				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
+					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
+				}
+				handled = true
+				err = reader.Skip(int(l))
+			}
+			if err == nil && !handled {
+			}
+			if err != nil {
+				return nil, enc.ErrFailToParse{TypeNum: typ, Err: err}
+			}
+		}
+	}
+
+	startPos = reader.Pos()
+	err = nil
+
+	if !handled_RequestId && err == nil {
+		err = enc.ErrSkipRequired{Name: "RequestId", TypeNum: 1440}
+	}
+	if !handled_Requester && err == nil {
+		err = enc.ErrSkipRequired{Name: "Requester", TypeNum: 1442}
+	}
+	if !handled_SentAt && err == nil {
+		err = enc.ErrSkipRequired{Name: "SentAt", TypeNum: 1444}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
+}
+
+func (value *RefreshPing) Encode() enc.Wire {
+	encoder := RefreshPingEncoder{}
+	encoder.Init(value)
+	return encoder.Encode(value)
+}
+
+func (value *RefreshPing) Bytes() []byte {
+	return value.Encode().Join()
+}
+
+func ParseRefreshPing(reader enc.WireView, ignoreCritical bool) (*RefreshPing, error) {
+	context := RefreshPingParsingContext{}
+	context.Init()
+	return context.Parse(reader, ignoreCritical)
+}
+
+type RefreshAckEncoder struct {
+	Length uint
+}
+
+type RefreshAckParsingContext struct {
+}
+
+func (encoder *RefreshAckEncoder) Init(value *RefreshAck) {
+
+	l := uint(0)
+	l += 3
+	l += uint(enc.TLNum(len(value.RequestId)).EncodingLength())
+	l += uint(len(value.RequestId))
+	l += 3
+	l += uint(enc.TLNum(len(value.Requester)).EncodingLength())
+	l += uint(len(value.Requester))
+	l += 3
+	l += uint(enc.TLNum(len(value.Responder)).EncodingLength())
+	l += uint(len(value.Responder))
+	l += 3
+	l += uint(1 + enc.Nat(value.Freshness).EncodingLength())
+	l += 3
+	l += uint(enc.TLNum(len(value.SentAt)).EncodingLength())
+	l += uint(len(value.SentAt))
+	encoder.Length = l
+
+}
+
+func (context *RefreshAckParsingContext) Init() {
+
+}
+
+func (encoder *RefreshAckEncoder) EncodeInto(value *RefreshAck, buf []byte) {
+
+	pos := uint(0)
+
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1440))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.RequestId)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.RequestId)
+	pos += uint(len(value.RequestId))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1442))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.Requester)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.Requester)
+	pos += uint(len(value.Requester))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1444))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.Responder)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.Responder)
+	pos += uint(len(value.Responder))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1446))
+	pos += 3
+
+	buf[pos] = byte(enc.Nat(value.Freshness).EncodeInto(buf[pos+1:]))
+	pos += uint(1 + buf[pos])
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1448))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.SentAt)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.SentAt)
+	pos += uint(len(value.SentAt))
+}
+
+func (encoder *RefreshAckEncoder) Encode(value *RefreshAck) enc.Wire {
+
+	wire := make(enc.Wire, 1)
+	wire[0] = make([]byte, encoder.Length)
+	buf := wire[0]
+	encoder.EncodeInto(value, buf)
+
+	return wire
+}
+
+func (context *RefreshAckParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*RefreshAck, error) {
+
+	var handled_RequestId bool = false
+	var handled_Requester bool = false
+	var handled_Responder bool = false
+	var handled_Freshness bool = false
+	var handled_SentAt bool = false
+
+	progress := -1
+	_ = progress
+
+	value := &RefreshAck{}
+	var err error
+	var startPos int
+	for {
+		startPos = reader.Pos()
+		if startPos >= reader.Length() {
+			break
+		}
+		typ := enc.TLNum(0)
+		l := enc.TLNum(0)
+		typ, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+		l, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+
+		err = nil
+		if handled := false; true {
+			switch typ {
+			case 1440:
+				if true {
+					handled = true
+					handled_RequestId = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.RequestId = builder.String()
+						}
+					}
+				}
+			case 1442:
+				if true {
+					handled = true
+					handled_Requester = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.Requester = builder.String()
+						}
+					}
+				}
+			case 1444:
+				if true {
+					handled = true
+					handled_Responder = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.Responder = builder.String()
+						}
+					}
+				}
+			case 1446:
+				if true {
+					handled = true
+					handled_Freshness = true
+					value.Freshness = uint64(0)
+					{
+						for i := 0; i < int(l); i++ {
+							x := byte(0)
+							x, err = reader.ReadByte()
+							if err != nil {
+								if err == io.EOF {
+									err = io.ErrUnexpectedEOF
+								}
+								break
+							}
+							value.Freshness = uint64(value.Freshness<<8) | uint64(x)
+						}
+					}
+				}
+			case 1448:
+				if true {
+					handled = true
+					handled_SentAt = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.SentAt = builder.String()
+						}
+					}
+				}
+			default:
+				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
+					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
+				}
+				handled = true
+				err = reader.Skip(int(l))
+			}
+			if err == nil && !handled {
+			}
+			if err != nil {
+				return nil, enc.ErrFailToParse{TypeNum: typ, Err: err}
+			}
+		}
+	}
+
+	startPos = reader.Pos()
+	err = nil
+
+	if !handled_RequestId && err == nil {
+		err = enc.ErrSkipRequired{Name: "RequestId", TypeNum: 1440}
+	}
+	if !handled_Requester && err == nil {
+		err = enc.ErrSkipRequired{Name: "Requester", TypeNum: 1442}
+	}
+	if !handled_Responder && err == nil {
+		err = enc.ErrSkipRequired{Name: "Responder", TypeNum: 1444}
+	}
+	if !handled_Freshness && err == nil {
+		err = enc.ErrSkipRequired{Name: "Freshness", TypeNum: 1446}
+	}
+	if !handled_SentAt && err == nil {
+		err = enc.ErrSkipRequired{Name: "SentAt", TypeNum: 1448}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
+}
+
+func (value *RefreshAck) Encode() enc.Wire {
+	encoder := RefreshAckEncoder{}
+	encoder.Init(value)
+	return encoder.Encode(value)
+}
+
+func (value *RefreshAck) Bytes() []byte {
+	return value.Encode().Join()
+}
+
+func ParseRefreshAck(reader enc.WireView, ignoreCritical bool) (*RefreshAck, error) {
+	context := RefreshAckParsingContext{}
+	context.Init()
+	return context.Parse(reader, ignoreCritical)
+}
+
+type RefreshRequestEncoder struct {
+	Length uint
+}
+
+type RefreshRequestParsingContext struct {
+}
+
+func (encoder *RefreshRequestEncoder) Init(value *RefreshRequest) {
+
+	l := uint(0)
+	l += 3
+	l += uint(enc.TLNum(len(value.RequestId)).EncodingLength())
+	l += uint(len(value.RequestId))
+	l += 3
+	l += uint(enc.TLNum(len(value.Requester)).EncodingLength())
+	l += uint(len(value.Requester))
+	l += 3
+	l += uint(enc.TLNum(len(value.Responder)).EncodingLength())
+	l += uint(len(value.Responder))
+	l += 3
+	l += uint(enc.TLNum(len(value.SentAt)).EncodingLength())
+	l += uint(len(value.SentAt))
+	encoder.Length = l
+
+}
+
+func (context *RefreshRequestParsingContext) Init() {
+
+}
+
+func (encoder *RefreshRequestEncoder) EncodeInto(value *RefreshRequest, buf []byte) {
+
+	pos := uint(0)
+
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1440))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.RequestId)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.RequestId)
+	pos += uint(len(value.RequestId))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1442))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.Requester)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.Requester)
+	pos += uint(len(value.Requester))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1444))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.Responder)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.Responder)
+	pos += uint(len(value.Responder))
+	buf[pos] = 253
+	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1446))
+	pos += 3
+	pos += uint(enc.TLNum(len(value.SentAt)).EncodeInto(buf[pos:]))
+	copy(buf[pos:], value.SentAt)
+	pos += uint(len(value.SentAt))
+}
+
+func (encoder *RefreshRequestEncoder) Encode(value *RefreshRequest) enc.Wire {
+
+	wire := make(enc.Wire, 1)
+	wire[0] = make([]byte, encoder.Length)
+	buf := wire[0]
+	encoder.EncodeInto(value, buf)
+
+	return wire
+}
+
+func (context *RefreshRequestParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*RefreshRequest, error) {
+
+	var handled_RequestId bool = false
+	var handled_Requester bool = false
+	var handled_Responder bool = false
+	var handled_SentAt bool = false
+
+	progress := -1
+	_ = progress
+
+	value := &RefreshRequest{}
+	var err error
+	var startPos int
+	for {
+		startPos = reader.Pos()
+		if startPos >= reader.Length() {
+			break
+		}
+		typ := enc.TLNum(0)
+		l := enc.TLNum(0)
+		typ, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+		l, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+
+		err = nil
+		if handled := false; true {
+			switch typ {
+			case 1440:
+				if true {
+					handled = true
+					handled_RequestId = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.RequestId = builder.String()
+						}
+					}
+				}
+			case 1442:
+				if true {
+					handled = true
+					handled_Requester = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.Requester = builder.String()
+						}
+					}
+				}
+			case 1444:
+				if true {
+					handled = true
+					handled_Responder = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.Responder = builder.String()
+						}
+					}
+				}
+			case 1446:
+				if true {
+					handled = true
+					handled_SentAt = true
+					{
+						var builder strings.Builder
+						_, err = reader.CopyN(&builder, int(l))
+						if err == nil {
+							value.SentAt = builder.String()
+						}
+					}
+				}
+			default:
+				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
+					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
+				}
+				handled = true
+				err = reader.Skip(int(l))
+			}
+			if err == nil && !handled {
+			}
+			if err != nil {
+				return nil, enc.ErrFailToParse{TypeNum: typ, Err: err}
+			}
+		}
+	}
+
+	startPos = reader.Pos()
+	err = nil
+
+	if !handled_RequestId && err == nil {
+		err = enc.ErrSkipRequired{Name: "RequestId", TypeNum: 1440}
+	}
+	if !handled_Requester && err == nil {
+		err = enc.ErrSkipRequired{Name: "Requester", TypeNum: 1442}
+	}
+	if !handled_Responder && err == nil {
+		err = enc.ErrSkipRequired{Name: "Responder", TypeNum: 1444}
+	}
+	if !handled_SentAt && err == nil {
+		err = enc.ErrSkipRequired{Name: "SentAt", TypeNum: 1446}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
+}
+
+func (value *RefreshRequest) Encode() enc.Wire {
+	encoder := RefreshRequestEncoder{}
+	encoder.Init(value)
+	return encoder.Encode(value)
+}
+
+func (value *RefreshRequest) Bytes() []byte {
+	return value.Encode().Join()
+}
+
+func ParseRefreshRequest(reader enc.WireView, ignoreCritical bool) (*RefreshRequest, error) {
+	context := RefreshRequestParsingContext{}
 	context.Init()
 	return context.Parse(reader, ignoreCritical)
 }

@@ -2,10 +2,10 @@
   <button
     ref="button"
     class="button"
-    @click.stop.prevent="dropdown?.open($event)"
-    title="Update contents of this node"
+    @click.stop.prevent="openFromButton"
+    title="Open actions menu"
   >
-    <FontAwesomeIcon class="mr-1" :icon="faCaretDown" size="2xs" />
+    <FontAwesomeIcon :icon="faEllipsisVertical" size="xs" />
 
     <DropdownMenu ref="dropdown">
       <a class="dropdown-item" v-if="allowNew" @click="emit('new-folder')"> New folder </a>
@@ -35,7 +35,7 @@
 import { onBeforeUnmount, onMounted, useTemplateRef } from 'vue';
 
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
-import { faCaretDown } from '@fortawesome/free-solid-svg-icons';
+import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons';
 import DropdownMenu from './DropdownMenu.vue';
 
 defineProps({
@@ -57,14 +57,29 @@ const emit = defineEmits<{
 const button = useTemplateRef('button');
 const dropdown = useTemplateRef('dropdown');
 
+function openFromButton() {
+  if (!button.value) return;
+  dropdown.value?.open(button.value);
+}
+
+function openFromContext(event: Event) {
+  const mouseEvent = event as MouseEvent;
+  mouseEvent.stopPropagation();
+  mouseEvent.preventDefault();
+
+  const anchor = button.value?.parentElement ?? button.value;
+  if (!anchor) return;
+  dropdown.value?.open(anchor);
+}
+
 // This is a bit ugly, but simplifies the parent component
 // Attach to the parent's context menu event here and trigger the dropdown
 onMounted(() => {
-  button.value?.parentElement?.addEventListener('contextmenu', dropdown.value!.open);
+  button.value?.parentElement?.addEventListener('contextmenu', openFromContext);
 });
 
 onBeforeUnmount(() => {
-  button.value?.parentElement?.removeEventListener('contextmenu', dropdown.value!.open);
+  button.value?.parentElement?.removeEventListener('contextmenu', openFromContext);
 });
 </script>
 

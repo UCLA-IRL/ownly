@@ -1,32 +1,46 @@
 <template>
-  <ul class="menu-list project-inner">
-    <li v-for="entry of tree" :key="entry.name">
-      <!-- Rename this entry -->
+  <ul :class="['menu-list', 'project-tree', { nested: props.depth > 0, outermost: props.depth === 0 }]">
+    <li v-for="entry in tree" :key="getEntryPath(entry)" class="tree-node">
+      <!-- Rename -->
       <ProjectTreeInput
+        v-if="renameEntry?.key === getEntryPath(entry)"
         class="tree-input"
-        v-if="renameEntry?.name === entry.name"
-        @cancel="renameEntry = null"
         :name="renameEntry.name"
+        @cancel="renameEntry = null"
         @done="executeRename"
       />
 
-      <!-- Render the entry -->
-      <component
-        v-else
-        class="one-entry"
-        :is="entry.is_folder ? 'a' : 'router-link'"
-        :to="entry.is_folder ? null : linkToFile(entry)"
-        :title="entry.name"
-        @click="openFolder(entry)"
+      <!-- Folder row -->
+      <div
+        v-else-if="entry.is_folder"
+        class="tree-row"
+        :class="{ open: isFolderOpen(entry) }"
       >
-        <div class="link-inner">
-          <FontAwesomeIcon class="mr-1" :icon="chooseIcon(entry)" size="sm" />
-          {{ entry.name }}
-        </div>
+        <button
+          type="button"
+          class="tree-disclosure"
+          :aria-label="isFolderOpen(entry) ? 'Collapse folder' : 'Expand folder'"
+          :aria-expanded="isFolderOpen(entry)"
+          :aria-controls="getFolderControlsId(entry)"
+          @click.stop="toggleFolder(entry)"
+        >
+          <FontAwesomeIcon
+            class="disclosure-icon"
+            :icon="isFolderOpen(entry) ? faChevronDown : faChevronRight"
+            size="sm"
+          />
+        </button>
+
+        <button type="button" class="tree-hit" :title="entry.name" @click="toggleFolder(entry)">
+          <span class="tree-label">
+            <FontAwesomeIcon class="tree-icon" :icon="chooseIcon(entry)" size="sm" />
+            <span class="tree-name">{{ entry.name }}</span>
+          </span>
+        </button>
 
         <ProjectTreeMenu
-          class="link-button"
-          :allow-new="entry.is_folder"
+          class="tree-actions"
+          :allow-new="true"
           :allow-delete="true"
           :allow-rename="true"
           @new-file="onSubtree(entry, (t) => t.newHere('file', $event))"
@@ -34,25 +48,49 @@
           @import="onSubtree(entry, (t) => t.importHere())"
           @import-zip="onSubtree(entry, (t) => t.importZipHere())"
           @export="executeExport(entry)"
-          @rename="renameEntry = entry"
+          @rename="renameEntry = { ...entry, key: getEntryPath(entry) }"
           @delete="executeDelete(entry)"
         />
-      </component>
+      </div>
 
+      <!-- File row -->
+      <div v-else class="tree-row file-row" :class="{ active: isFileActive(entry) }">
+
+        <router-link class="tree-hit" :to="linkToFile(entry)" :title="entry.name">
+          <span class="tree-label">
+            <FontAwesomeIcon class="tree-icon" :icon="chooseIcon(entry)" size="sm" />
+            <span class="tree-name">{{ entry.name }}</span>
+          </span>
+        </router-link>
+
+        <ProjectTreeMenu
+          class="tree-actions"
+          :allow-new="false"
+          :allow-delete="true"
+          :allow-rename="true"
+          @export="executeExport(entry)"
+          @rename="renameEntry = { ...entry, key: getEntryPath(entry) }"
+          @delete="executeDelete(entry)"
+        />
+      </div>
+
+      <!-- Children -->
       <ProjectTree
         ref="subtrees"
         v-if="isFolderOpen(entry)"
+        :id="getFolderControlsId(entry)"
         :project="props.project"
         :files="[]"
         :rtree="entry.children ?? []"
         :path="`${path}${entry.name}/`"
         :parent="entry.name"
+        :depth="props.depth + 1"
       />
     </li>
 
     <ProjectTreeInput
-      class="tree-input"
       v-if="newFile.show"
+      class="tree-input"
       @cancel="newFile.show = false"
       @done="executeNew"
     />
@@ -76,6 +114,8 @@ import {
   faFileExcel,
   faFilePdf,
   faFileImage,
+  faChevronRight,
+  faChevronDown,
 } from '@fortawesome/free-solid-svg-icons';
 
 import ProjectTreeInput from './ProjectTreeInput.vue';
@@ -92,6 +132,8 @@ type TreeEntry = {
   children?: TreeEntry[];
   is_folder?: boolean;
 };
+
+type RenameEntry = TreeEntry & { key: string };
 
 const props = defineProps({
   project: {
@@ -116,6 +158,11 @@ const props = defineProps({
     required: false,
     default: '',
   },
+  depth: {
+    type: Number,
+    required: false,
+    default: 0,
+  },
 });
 
 const route = useRoute();
@@ -129,11 +176,13 @@ const newFile = ref({
   type: 'file' as 'file' | 'folder',
   ext: null as string | null,
 });
-const renameEntry = ref(null as TreeEntry | null);
+
+const renameEntry = ref<RenameEntry | null>(null);
 
 defineExpose({ newHere, importHere, importZipHere, executeExport, parent: props.parent });
 onMounted(checkRoute);
 watch(() => route.params.filename, checkRoute);
+
 const splitPath = computed(() => props.path.split('/').filter(Boolean));
 
 /**
@@ -143,45 +192,53 @@ const splitPath = computed(() => props.path.split('/').filter(Boolean));
 const tree = computed<TreeEntry[]>(() => {
   if (props.rtree) return props.rtree;
 
-  // Computed tree structure
   const tree: TreeEntry[] = [];
 
-  // DFS to fill the tree for the given path
   const fillPrefix = (path: string) => {
     const parts = path.split('/');
     let current = tree;
+
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       if (!part) continue;
+      const isFolder = i !== parts.length - 1;
 
       const existing = current.find((e) => e.name === part);
       if (existing) {
-        current = existing.children!;
+        if (isFolder) {
+          existing.is_folder = true;
+          existing.children = existing.children ?? [];
+          current = existing.children;
+        }
       } else {
         const newEntry: TreeEntry = {
           name: part,
-          is_folder: i !== parts.length - 1,
-          children: [],
+          is_folder: isFolder,
         };
+
+        if (isFolder) {
+          newEntry.children = [];
+        }
+
         current.push(newEntry);
-        current = newEntry.children!;
+        if (isFolder) {
+          current = newEntry.children!;
+        }
       }
     }
   };
 
-  // Fill the tree for all files
   for (const file of props.files) {
     fillPrefix(file.path);
   }
 
-  // Sort the tree by folder -> name
-  const sortTree = (tree: TreeEntry[]) => {
-    tree.sort((a, b) => {
+  const sortTree = (t: TreeEntry[]) => {
+    t.sort((a, b) => {
       if (a.is_folder && !b.is_folder) return -1;
       if (!a.is_folder && b.is_folder) return 1;
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
     });
-    for (const entry of tree) {
+    for (const entry of t) {
       if (entry.children) sortTree(entry.children);
     }
   };
@@ -190,21 +247,20 @@ const tree = computed<TreeEntry[]>(() => {
   return tree;
 });
 
-// Watch if the route changes to a file that includes this node's child
-// In that case make sure that the child folder is open
+// Auto-open child folders for the current route
 function checkRoute() {
   if (!route.params.filename) return;
+
   const parts = route.params.filename as string[];
   if (parts.length <= 1) return;
 
-  // Check if the route is a child of this folder
   const myparts = splitPath.value;
   if (parts.length <= myparts.length) return;
+
   if (parts.slice(0, myparts.length).every((p, i) => p === myparts[i])) {
-    // Check if the route is a direct child of this folder
     const folder = parts[myparts.length];
     const entry = tree.value.find((e) => e.name === folder);
-    if (entry) openFolder(entry, true);
+    if (entry) toggleFolder(entry, true);
   }
 }
 
@@ -213,16 +269,35 @@ function linkToFile(entry: TreeEntry) {
   return {
     name: 'project-file',
     params: {
+      space: route.params.space as string,
       project: props.project.name,
       filename: splitPath.value.concat(entry.name),
     },
   };
 }
 
+function isFileActive(entry: TreeEntry) {
+  const routeFile = route.params.filename;
+  const routeParts = Array.isArray(routeFile) ? routeFile : routeFile ? [routeFile] : [];
+  const entryParts = splitPath.value.concat(entry.name);
+  return (
+    routeParts.length === entryParts.length && routeParts.every((part, index) => part === entryParts[index])
+  );
+}
+
+/** Get the project path to an entry */
+function getEntryPath(entry: TreeEntry) {
+  return `${props.path}${entry.name}${entry.is_folder ? '/' : ''}`;
+}
+
+function getFolderControlsId(entry: TreeEntry) {
+  return `project-tree-${encodeURIComponent(getEntryPath(entry))}`;
+}
+
 /** Choose an icon for a given entry */
 function chooseIcon(entry: TreeEntry) {
   if (entry.is_folder) {
-    return foldersOpen.value[entry.name] ? faFolderOpen : faFolder;
+    return isFolderOpen(entry) ? faFolderOpen : faFolder;
   }
 
   switch (utils.getExtensionType(entry.name)) {
@@ -239,7 +314,6 @@ function chooseIcon(entry: TreeEntry) {
     case 'pdf':
       return faFilePdf;
     case 'image':
-      return faFileImage;
     case 'excalidraw':
       return faFileImage;
     default:
@@ -247,34 +321,29 @@ function chooseIcon(entry: TreeEntry) {
   }
 }
 
-/** Map of open folders for O(1) lookup */
+/** Map of open folders (keyed by full path to avoid name collisions) */
 const foldersOpen = ref<Record<string, boolean>>({});
 
-/** Check if folder is open (show contents inside) */
 function isFolderOpen(entry: TreeEntry) {
-  return entry.is_folder && foldersOpen.value[entry.name];
+  if (!entry.is_folder) return false;
+  return !!foldersOpen.value[getEntryPath(entry)];
 }
 
-/** Mark folder as open */
-function openFolder(entry: TreeEntry, val?: boolean) {
-  if (entry.is_folder) {
-    foldersOpen.value[entry.name] = val !== undefined ? val : !foldersOpen.value[entry.name];
-  }
+function toggleFolder(entry: TreeEntry, val?: boolean) {
+  if (!entry.is_folder) return;
+  const k = getEntryPath(entry);
+  foldersOpen.value[k] = val !== undefined ? val : !foldersOpen.value[k];
 }
 
 /** Run the callback on a subtree component */
 function onSubtree(subfolder: TreeEntry, callback: (subtree: any) => void) {
   if (!subfolder.is_folder) return;
-  openFolder(subfolder, true);
+  toggleFolder(subfolder, true);
+
   nextTick(() => {
     const subtree = subtrees.value?.find((t) => t?.parent === subfolder.name);
     if (subtree) callback(subtree);
   });
-}
-
-/** Get the project path to a entry */
-function getEntryPath(entry: TreeEntry) {
-  return `${props.path}${entry.name}${entry.is_folder ? '/' : ''}`;
 }
 
 /** Create a new file in the current folder */
@@ -325,7 +394,6 @@ async function executeDelete(entry: TreeEntry) {
   const path = getEntryPath(entry);
 
   // TODO: confirmation prompt
-
   try {
     const proj = await Workspace.setupAndGetActiveProj(router);
     await proj.deleteFile(path);
@@ -342,7 +410,6 @@ async function importHere() {
   const files = await utils.selectFiles({ multiple: true });
   if (!files.length) return;
 
-  // Import all selected files
   for (const file of files) {
     try {
       const path = `${props.path}${file.name}`;
@@ -365,30 +432,24 @@ async function importZipHere() {
     accept: '.zip',
     multiple: false,
   });
+
   const zipFile = files[0] ?? null;
   if (!zipFile) return;
 
-  // Read the ZIP file and import each entry
   const reader = new zip.ZipReader(new zip.BlobReader(zipFile));
-
-  // Show progress of import
   const progress = Toast.loading(`Importing files from ${zipFile.name}`);
 
   let importedCount = 0;
   for await (const entry of reader.getEntriesGenerator()) {
     try {
-      // We don't need to make folders
       if (entry.directory) continue;
 
-      // Show progress of import
       await progress.msg(`Importing ${entry.filename} from ${zipFile.name}`);
 
-      // Read the entry to buffer
       const writer = new zip.BlobWriter();
       await entry.getData?.(writer);
       const content = await writer.getData();
 
-      // Import the file
       const path = `${props.path}${entry.filename}`;
       await proj.importFile(path, content.stream());
       importedCount++;
@@ -407,7 +468,6 @@ async function importZipHere() {
 
 /** Export a file or folder */
 async function executeExport(entry: TreeEntry | null) {
-  // If entry is null, use root path
   const path = entry ? getEntryPath(entry) : props.path;
   try {
     const proj = await Workspace.setupAndGetActiveProj(router);
@@ -438,34 +498,284 @@ async function executeRename(name: string) {
 </script>
 
 <style lang="scss" scoped>
-@use '@/components/navbar-item.scss';
+/* Overleaf-like file tree look (compact rows, chevrons, subtle guides, active bar) */
+.project-tree {
+  --tree-row-height: 28px;
+  --tree-font-size: 13px;
 
-.project-inner {
-  padding-inline-start: 4px !important;
-  &:not(.outermost) {
-    margin: 0 0 0 6px !important;
+  --tree-pad-x: 8px;
+  --tree-action-size: 22px;
+  --tree-chevron-size: 18px;
+
+  --tree-line-left-gap: 12px;
+  --tree-line-right-gap: 10px;
+  --tree-indent-step: calc(var(--tree-line-left-gap) + 1px + var(--tree-line-right-gap));
+
+  --tree-guide: rgba(255, 255, 255, 0.12);
+  --tree-hover: rgba(255, 255, 255, 0.06);
+  --tree-active-bg: rgba(255, 255, 255, 0.08);
+  --tree-active-bar: var(--sidebar-highlight-bg);
+  --tree-connector-x: var(--tree-line-left-gap);
+
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  box-sizing: border-box;
+  position: relative;
+
+  font-size: var(--tree-font-size);
+  color: white;
+
+  > li {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    box-sizing: border-box;
   }
+
+  &.nested {
+    border-left: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    --tree-connector-x: calc(-1 * var(--tree-indent-step) + var(--tree-line-left-gap));
+    margin-left: var(--tree-indent-step);
+    width: calc(100% - var(--tree-indent-step));
+
+    > li {
+      position: relative;
+
+      &::before {
+        content: '';
+        position: absolute;
+        left: var(--tree-connector-x);
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: var(--tree-guide);
+        pointer-events: none;
+      }
+
+      &::after {
+        content: '';
+        position: absolute;
+        left: calc(var(--tree-connector-x) + 1px);
+        top: calc(var(--tree-row-height) / 2);
+        width: calc(var(--tree-line-right-gap) - 1px);
+        height: 1px;
+        background: var(--tree-guide);
+        pointer-events: none;
+      }
+
+      &:last-child::before {
+        bottom: calc(100% - (var(--tree-row-height) / 2) - 1px);
+      }
+    }
+  }
+
   &.outermost {
-    margin: 4px 4px !important;
+    border-inline-start: 0 !important;
+    margin-inline-start: 0 !important;
+    padding-inline-start: 0 !important;
+  }
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--tree-row-height);
+  border-radius: 6px;
+  box-sizing: border-box;
+  margin: 0;
+  padding-right: calc(var(--tree-action-size) + 8px);
+  color: inherit;
+
+  position: relative;
+
+  &:hover,
+  &:focus-within {
+    background: var(--tree-hover);
   }
 
-  li > a,
-  .tree-input :deep(input) {
-    height: 1.9em;
-    font-size: 0.88em;
-    padding: 0.4em 0.5em;
-    line-height: 1.05em;
+  /* Active file: subtle background + left bar like Overleaf */
+  &.active {
+    background: var(--tree-active-bg);
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      border-radius: 6px 0 0 6px;
+      background: var(--tree-active-bar);
+      z-index: 0;
+      pointer-events: none;
+    }
   }
 
-  .one-entry > .link-button {
-    display: none;
-    // This is truly horrible, but it's the only way to reuse
-    // the styles between navbar and project tree for the link
-    // button with a bunch of !importants everywhere :'(
-    transform: translateY(-0.2em);
+  &.active:hover,
+  &.active:focus-within {
+    background: var(--tree-active-bg);
   }
-  .one-entry:hover > .link-button {
-    display: inline-block;
+}
+
+.tree-row.file-row {
+  padding-left: 2px;
+}
+
+.tree-row.file-row .tree-hit {
+  padding-left: 12px;
+}
+
+.tree-disclosure {
+  flex: 0 0 var(--tree-chevron-size);
+  width: var(--tree-chevron-size);
+  height: var(--tree-row-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 3px;
+  border: 0;
+  background: transparent;
+  color: inherit !important;
+  opacity: 1;
+  cursor: pointer;
+  position: relative;
+  z-index: 5;
+  overflow: visible;
+
+  &.spacer {
+    visibility: hidden;
+    cursor: default;
   }
+
+  &:hover {
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.25);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+.disclosure-icon {
+  color: inherit !important;
+  opacity: 1;
+  font-size: 0.85rem;
+}
+
+.tree-disclosure :deep(svg) {
+  display: block;
+  color: inherit !important;
+  opacity: 1;
+}
+
+.tree-hit {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--tree-row-height);
+  padding: 0 var(--tree-pad-x);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  z-index: 1;
+
+  /* Make anchor and button look identical */
+  &:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.25);
+    outline-offset: 2px;
+  }
+}
+
+.tree-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.tree-icon {
+  flex: 0 0 auto;
+  opacity: 1;
+}
+
+.tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  opacity: 1;
+}
+
+/* Actions: behave like Overleaf (hidden until hover, always on active row) */
+.tree-actions {
+  width: var(--tree-action-size);
+  height: var(--tree-action-size);
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+
+  background: transparent !important;
+  color: inherit;
+  transition: background-color 0.12s ease;
+
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tree-row:hover .tree-actions,
+.tree-row:focus-within .tree-actions,
+.tree-row.active .tree-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tree-row:hover .tree-actions,
+.tree-row:focus-within .tree-actions {
+  background-color: rgba(0, 0, 0, 0.18) !important;
+}
+
+.tree-row:hover .tree-actions:hover,
+.tree-row:focus-within .tree-actions:hover,
+.tree-row:hover .tree-actions:focus-visible,
+.tree-row:focus-within .tree-actions:focus-visible {
+  background-color: rgba(0, 0, 0, 0.3) !important;
+}
+
+:deep(.tree-input input) {
+  width: 100%;
+  height: var(--tree-row-height);
+  min-height: var(--tree-row-height);
+  box-sizing: border-box;
+  margin: 1px 0;
+  border-radius: 6px;
+  padding: 0 var(--tree-pad-x);
+  font-size: var(--tree-font-size);
+  line-height: 1;
 }
 </style>

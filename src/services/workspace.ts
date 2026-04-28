@@ -10,7 +10,7 @@ import { GlobalBus } from '@/services/event-bus';
 import * as utils from '@/utils/index';
 import { Toast } from '@/utils/toast';
 
-import type { SvsAloApi, WorkspaceAPI } from '@/services/ndn';
+import type { SvsAloApi, WorkspaceAPI, RefreshAckPub, RefreshPingPub, RefreshRequestPub } from '@/services/ndn';
 import type { Router } from 'vue-router';
 import type { IWkspStats } from '@/services/types';
 
@@ -27,6 +27,17 @@ declare global {
  * Workspace service
  */
 export class Workspace {
+  private static readonly REFRESH_MAX_AGE_MS = 30_000;
+  private static readonly REFRESH_STATE_TTL_MS = 60_000;
+
+  private readonly refreshUnsubs = Array<() => void>();
+  private readonly pendingRefreshAcks = new Map<string, {
+    createdAt: number;
+    responders: Map<string, RefreshAckPub>;
+  }>();
+  private readonly seenRefreshPings = new Map<string, number>();
+  private readonly seenRefreshReqs = new Map<string, number>();
+
   private constructor(
     public readonly metadata: IWkspStats,
     private readonly api: WorkspaceAPI,
@@ -34,8 +45,8 @@ export class Workspace {
     public readonly chat: WorkspaceChat,
     public readonly proj: WorkspaceProjManager,
     public readonly invite: WorkspaceInviteManager,
-    public readonly agent: WorkspaceAgentManager | null
-  ) { }
+    public readonly agent: WorkspaceAgentManager | null,
+  ) {}
 
   /**
    * Start the workspace.
@@ -79,6 +90,7 @@ export class Workspace {
 
       // Create workspace object first (without agent)
       const workspace = new Workspace(metadata, api, provider, chat, proj, invite, null);
+      workspace.registerRefreshHandlers();
 
       // Then create agent with workspace reference
       const agent = await WorkspaceAgentManager.create(api, provider, workspace);
@@ -101,12 +113,187 @@ export class Workspace {
   public async destroy() {
     await this.proj.destroy();
     await this.chat.destroy();
+    for (const off of this.refreshUnsubs) {
+      off();
+    }
+    this.refreshUnsubs.length = 0;
+    this.pendingRefreshAcks.clear();
+    this.seenRefreshPings.clear();
+    this.seenRefreshReqs.clear();
     await this.provider?.destroy();
     if (this.agent) {
       await this.agent.destroy();
     }
     await this.api?.stop();
     await this.invite.destroy();
+  }
+
+  private registerRefreshHandlers(): void {
+    this.refreshUnsubs.push(
+      this.provider.onRefreshPing((pubs) => this.handleRefreshPing(pubs)),
+    );
+    this.refreshUnsubs.push(
+      this.provider.onRefreshAck((pubs) => this.handleRefreshAck(pubs)),
+    );
+    this.refreshUnsubs.push(
+      this.provider.onRefreshReq((pubs) => this.handleRefreshReq(pubs)),
+    );
+  }
+
+  private async handleRefreshPing(pubs: RefreshPingPub[]): Promise<void> {
+    const now = Date.now();
+    this.pruneRefreshState(now);
+
+    for (const pub of pubs) {
+      if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
+      if (pub.requester === this.api.name) continue;
+      if (this.seenRefreshPings.has(pub.request_id)) continue;
+
+      this.seenRefreshPings.set(pub.request_id, now);
+      await this.provider.svs.pub_refresh_ack(
+        pub.request_id,
+        pub.requester,
+        this.api.name,
+        Math.floor(Date.now() / 1000),
+        new Date().toISOString(),
+      );
+    }
+  }
+
+  private async handleRefreshAck(pubs: RefreshAckPub[]): Promise<void> {
+    this.pruneRefreshState();
+
+    for (const pub of pubs) {
+      if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
+      if (pub.requester !== this.api.name) continue;
+
+      const entry = this.pendingRefreshAcks.get(pub.request_id);
+      if (!entry) continue;
+
+      entry.responders.set(pub.responder, pub);
+    }
+  }
+
+  private async handleRefreshReq(pubs: RefreshRequestPub[]): Promise<void> {
+    const now = Date.now();
+    this.pruneRefreshState(now);
+
+    for (const pub of pubs) {
+      if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
+      if (pub.responder !== this.api.name) continue;
+
+      if (this.seenRefreshReqs.has(pub.request_id)) continue;
+
+      this.seenRefreshReqs.set(pub.request_id, now);
+      console.log('accepted refresh request', {
+        request_id: pub.request_id,
+        requester: pub.requester,
+        responder: pub.responder,
+      });
+      await this.republishEncryptedState();
+    }
+  }
+
+  public async sendRefreshPing(): Promise<string> {
+    const now = Date.now();
+    this.pruneRefreshState(now);
+
+    const requestId = crypto.randomUUID();
+    this.pendingRefreshAcks.set(requestId, {
+      createdAt: now,
+      responders: new Map(),
+    });
+
+    console.log('sending refresh ping', {
+      request_id: requestId,
+      requester: this.api.name,
+    });
+    await this.provider.svs.pub_refresh_ping(
+      requestId,
+      this.api.name,
+      new Date().toISOString(),
+    );
+
+    return requestId;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  public async sosRequest(timeoutMs = 3_000, pollMs = 200): Promise<{ requestId: string; responder: string }> {
+    const requestId = await this.sendRefreshPing();
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const responders = this.getRefreshResponders(requestId);
+      if (responders.length > 0) {
+        const chosen = responders[0];
+
+        console.log('auto-selected SOS responder', {
+          request_id: requestId,
+          requester: this.api.name,
+          responder: chosen.responder,
+        });
+
+        await this.requestRefresh(requestId, chosen.responder);
+        this.pendingRefreshAcks.delete(requestId);
+        return {
+          requestId,
+          responder: chosen.responder,
+        };
+      }
+
+      await this.sleep(pollMs);
+    }
+
+    throw new Error('No online responder acknowledged the SOS request');
+  }
+
+  public getRefreshResponders(requestId: string): RefreshAckPub[] {
+    this.pruneRefreshState();
+
+    const entry = this.pendingRefreshAcks.get(requestId);
+    return entry ? Array.from(entry.responders.values()) : [];
+  }
+
+  public async requestRefresh(requestId: string, responder: string): Promise<void> {
+    await this.provider.svs.pub_refresh_req(
+      requestId,
+      this.api.name,
+      responder,
+      new Date().toISOString(),
+    );
+  }
+
+  private pruneRefreshState(now = Date.now()): void {
+    for (const [requestId, entry] of this.pendingRefreshAcks) {
+      if (now - entry.createdAt > Workspace.REFRESH_STATE_TTL_MS) {
+        this.pendingRefreshAcks.delete(requestId);
+      }
+    }
+
+    for (const [requestId, seenAt] of this.seenRefreshPings) {
+      if (now - seenAt > Workspace.REFRESH_STATE_TTL_MS) {
+        this.seenRefreshPings.delete(requestId);
+      }
+    }
+
+    for (const [requestId, seenAt] of this.seenRefreshReqs) {
+      if (now - seenAt > Workspace.REFRESH_STATE_TTL_MS) {
+        this.seenRefreshReqs.delete(requestId);
+      }
+    }
+  }
+
+  private isRefreshExpired(sentAt: string, maxAgeMs = 30_000): boolean {
+    const sentTime = new Date(sentAt).getTime();
+    if (isNaN(sentTime)) {
+      console.warn(`Invalid sentAt timestamp: ${sentAt}`);
+      return true;
+    }
+    const currentTime = Date.now();
+    return currentTime - sentTime > maxAgeMs;
   }
 
   /**
@@ -124,6 +311,29 @@ export class Workspace {
    */
   public async getMembers(): Promise<string[]> {
     return await this.provider.svs.names();
+  }
+
+  /**
+   * Republish the current encrypted Yjs state as a manual recovery action for clients 
+   * that appear to be stuck on stale encrypted history or snapshot state.
+   */
+  public async republishEncryptedState(): Promise<void> {
+    await this.provider.republishEncryptedState();
+    await this.proj.republishEncryptedState();
+    console.log('finished workspace encrypted-state republish', {
+      workspace: this.metadata.name,
+      responder: this.api.name,
+    });
+  }
+
+  /**
+   * Manually force a fresh encrypted-state republish for the workspace.
+   */
+  public async forceSnapshotUpdate(): Promise<void> {
+    if (!this.metadata.owner) {
+      throw new Error('Only the workspace owner can force a snapshot update');
+    }
+    await this.republishEncryptedState();
   }
 
   /**

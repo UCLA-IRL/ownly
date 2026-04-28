@@ -149,6 +149,12 @@ export interface SvsAloApi {
 
   /** Publish chat message to SVS ALO */
   pub_yjs_delta(uuid: string, binary: Uint8Array): Promise<void>;
+  /** Publish refresh ping command */
+  pub_refresh_ping(request_id: string, requester: string, sentAt: string): Promise<string>;
+  /** Publish refresh ack command */
+  pub_refresh_ack(request_id: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
+  /** Publish refresh request command */
+  pub_refresh_req(request_id: string, requester: string, responder: string, sentAt: string): Promise<string>;
   /** Publish blob fetch command */
   pub_blob_fetch(name: string, encapsulate: Uint8Array | undefined): Promise<string>;
   /** Publish request for the DSK */
@@ -158,7 +164,10 @@ export interface SvsAloApi {
 
   /** Set SVS ALO subscription callbacks */
   subscribe(params: {
-    on_yjs_delta: SvsAloSub<{ uuid: string; binary: Uint8Array }>;
+    on_yjs_delta?: SvsAloSub<{ uuid: string; binary: Uint8Array }>;
+    on_refresh_ping?: SvsAloSub<RefreshPingPub>;
+    on_refresh_ack?: SvsAloSub<RefreshAckPub>;
+    on_refresh_req?: SvsAloSub<RefreshRequestPub>;
   }): Promise<void>;
 
   /** Awareness instance piggybacking on this SVS instance */
@@ -173,6 +182,27 @@ export type SvsAloPubInfo = {
   publisher: string;
   boot_time: number;
   seq_num: number;
+};
+
+export type RefreshPingPub = SvsAloPubInfo & {
+  request_id: string;
+  requester: string;
+  sent_at: string;
+};
+
+export type RefreshAckPub = SvsAloPubInfo & {
+  request_id: string;
+  requester: string;
+  responder: string;
+  freshness: number;
+  sent_at: string;
+};
+
+export type RefreshRequestPub = SvsAloPubInfo & {
+  request_id: string;
+  requester: string;
+  responder: string;
+  sent_at: string;
 };
 
 /** API for Awareness */

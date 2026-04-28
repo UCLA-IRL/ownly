@@ -3,7 +3,7 @@ import * as awareProto from 'y-protocols/awareness.js';
 
 import * as utils from '@/utils';
 
-import type { AwarenessApi, SvsAloApi, WorkspaceAPI } from '@/services/ndn';
+import type { AwarenessApi, SvsAloApi, WorkspaceAPI, RefreshAckPub, RefreshPingPub, RefreshRequestPub, SvsAloSub } from '@/services/ndn';
 import type { AwarenessLocalState } from '@/services/types';
 import type { ProjDb } from '@/services/database/proj_db';
 import { Bundler } from "@/utils/bundler.ts";
@@ -20,6 +20,10 @@ export class SvsProvider {
   private readonly persistDirty = new Set<string>();
   private lastCompaction = 0;
   private isCompacting = false;
+
+  private readonly refreshPingSubs = new Set<SvsAloSub<RefreshPingPub>>();
+  private readonly refreshAckSubs = new Set<SvsAloSub<RefreshAckPub>>();
+  private readonly refreshReqSubs = new Set<SvsAloSub<RefreshRequestPub>>();
 
   private constructor(
     private readonly db: ProjDb,
@@ -122,8 +126,69 @@ export class SvsProvider {
           console.error('Failed to apply update', e);
         }
       },
+
+      on_refresh_ping: async (pubs) => {
+        await this.emitBatch(this.refreshPingSubs, pubs);
+      },
+
+      on_refresh_ack: async (pubs) => {
+        await this.emitBatch(this.refreshAckSubs, pubs);
+      },
+
+      on_refresh_req: async (pubs) => {
+        await this.emitBatch(this.refreshReqSubs, pubs);
+      },
+      
     });
     await this.svs.start();
+  }
+
+  public onRefreshPing(cb: SvsAloSub<RefreshPingPub>): () => void {
+    this.refreshPingSubs.add(cb);
+    return () => this.refreshPingSubs.delete(cb);
+  }
+
+  public onRefreshAck(cb: SvsAloSub<RefreshAckPub>): () => void {
+    this.refreshAckSubs.add(cb);
+    return () => this.refreshAckSubs.delete(cb);
+  }
+
+  public onRefreshReq(cb: SvsAloSub<RefreshRequestPub>): () => void {
+    this.refreshReqSubs.add(cb);
+    return () => this.refreshReqSubs.delete(cb);
+  }
+
+  private async emitBatch<T>(subs: Set<SvsAloSub<T>>, pubs: T[]): Promise<void> {
+    if (pubs.length === 0) return;
+    for (const cb of subs) {
+      try {
+        await cb(pubs);
+      } catch (e) {
+        console.error('Failed to handle refresh publication batch', e);
+      }
+    }
+  }
+
+  /**
+   * Export the currently persisted Yjs updates for a document as a single merged update.
+   */
+  public async exportDocSnapshot(uuid: string): Promise<Uint8Array> {
+    const updates = await this.db.updateGetAll(uuid);
+    if (updates.length === 0) return new Uint8Array();
+    if (updates.length === 1) return updates[0].update;
+    return Y.mergeUpdatesV2(updates.map((update) => update.update));
+  }
+
+  /**
+   * Republish the merged encrypted Yjs history of every persisted document in this SVS group.
+   */
+  public async republishEncryptedState(): Promise<void> {
+    const uuids = await this.db.updateListUUID();
+    for (const uuid of uuids) {
+      const merged = await this.exportDocSnapshot(uuid);
+      if (!(merged instanceof Uint8Array) || merged.byteLength === 0) continue;
+      await this.svs.pub_yjs_delta(uuid, merged);
+    }
   }
 
   /**

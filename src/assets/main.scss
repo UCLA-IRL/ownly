@@ -15,9 +15,13 @@ html {
   --z-navbar: 500;
   --z-dropdown: 550;
   --z-modal: 800;
+  --theme-is-dark: 0;
 
-  // This color is white on light mode and primary on dark mode
-  --highlight-on-primary-color: var(--bulma-body-background-color);
+  // Active-item accent color on the primary-colored sidebar.
+  // N.B. References --bulma-body-background-color which is set by Bulma's own
+  // @media (prefers-color-scheme) and [data-theme] rules. The bulma-theme('light')
+  // block below must also set this to keep it correct when data-theme overrides the OS.
+  --sidebar-highlight-bg: var(--bulma-body-background-color);
 }
 
 * {
@@ -26,10 +30,9 @@ html {
   scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
 }
 
-/** Override background color to be darker on dark mode */
-@include cv.system-theme($name: 'dark') {
+@mixin dark-theme-overrides {
   --theme-is-dark: 1;
-  --highlight-on-primary-color: var(--bulma-primary);
+  --sidebar-highlight-bg: var(--bulma-primary);
 
   .has-background-primary.soft-if-dark,
   .is-primary.soft-if-dark {
@@ -45,5 +48,42 @@ html {
 
   .invert-if-dark {
     filter: invert(1);
+  }
+}
+
+/** Override background color to be darker on dark mode.
+ *  Use html:not([data-theme]) so that when the user explicitly picks
+ *  light mode the OS-level dark preference doesn't bleed through. */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    @include dark-theme-overrides;
+  }
+}
+
+@include cv.bulma-theme($name: 'dark') {
+  @include dark-theme-overrides;
+}
+
+@include cv.bulma-theme($name: 'light') {
+  --theme-is-dark: 0;
+  --sidebar-highlight-bg: var(--bulma-body-background-color);
+}
+
+// Smooth curtain overlay for theme transitions
+.theme-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  opacity: 0;
+  // background is set inline per-toggle to match the destination theme
+  transition: opacity 0.22s ease-in;
+
+  &.visible {
+    opacity: 1;
+  }
+
+  &.out {
+    transition: opacity 0.35s ease-out;
   }
 }
