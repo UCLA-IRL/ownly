@@ -18,6 +18,14 @@
 #user: "ndn"/user50/user51/user52/user53/user54
 #user: "ndn"/user60/user61/user62/user63/user64/user65
 
+// Name of directed request requester
+#requester: "ndn"/requester10
+#requester: "ndn"/requester20/requester21
+#requester: "ndn"/requester30/requester31/requester32
+#requester: "ndn"/requester40/requester41/requester42/requester43
+#requester: "ndn"/requester50/requester51/requester52/requester53/requester54
+#requester: "ndn"/requester60/requester61/requester62/requester63/requester64/requester65
+
 // Only owner can sign all user certificates
 // The delegation will happen using a separate CrossSchema
 #user_cert: #owner/wksp/#user/#KEY <= #owner_cert
@@ -40,7 +48,10 @@
 #invite: #owner/wksp/"root"/"32=INVITE"/#user <= #owner_cert
 
 // Republish Request for SOS
-#refresh_req: #owner/wksp/"root"/"32=REFRESH_REQ"/#user/_/_/#user/_ <= #user_cert | #owner_cert
+#refresh_req: #owner/wksp/"root"/"32=REFRESH_REQ"/#user/_/_/#requester/_ <= #user_cert
+
+// MLS state reset Request
+#mls_rst_req: #owner/wksp/"root"/"32=MLS_RST_REQ"/#owner/_/_/#user/_ <= #owner_cert
 
 // DSK exchange
 #dsk: #owner/wksp/"root"/"32=DSK"/_ <= #user_cert
