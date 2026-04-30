@@ -15,11 +15,13 @@ registerSW({ immediate: true });
 // Initialize browser services
 import { IDBStatsDb } from '@/services/database/stats_browser';
 import { IDBProjDb } from './services/database/proj_db_browser';
+import { IDBBootStateDb } from './services/database/boot_db_browser';
 import streamSaver from 'streamsaver';
 
 globalThis._o = {
   stats: new IDBStatsDb(),
   ProjDb: IDBProjDb,
+  bootState: new IDBBootStateDb(),
 
   getStorageRoot: () => window.navigator.storage.getDirectory(),
   streamSaver: streamSaver,

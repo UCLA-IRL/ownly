@@ -17,6 +17,7 @@ import (
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 	"github.com/named-data/ndnd/std/object"
 	"github.com/named-data/ndnd/std/security"
+	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
 	"github.com/named-data/ndnd/std/utils"
 )
@@ -60,10 +61,10 @@ func (a *App) GetTestbedKey() (ndn.Signer, time.Time) {
 				}
 
 				// Get certificate expiry
-				log.Info(nil, "Found valid testbed cert", "name", certData.Name())
+				log.Debug(nil, "Found valid testbed cert", "name", certData.Name())
 				_, notAfter := certData.Signature().Validity()
 				if val, ok := notAfter.Get(); ok && (bestExpiry.IsZero() || bestExpiry.Before(val)) {
-					bestSigner = key.Signer()
+					bestSigner = sig.WithKeyLocator(key.Signer(), certData.Name())
 					bestExpiry = val
 				}
 			}
@@ -71,7 +72,7 @@ func (a *App) GetTestbedKey() (ndn.Signer, time.Time) {
 	}
 
 	if bestSigner != nil {
-		log.Info(nil, "Using testbed certificate", "expiry", bestExpiry)
+		log.Debug(nil, "Using testbed certificate", "expiry", bestExpiry)
 	}
 
 	return bestSigner, bestExpiry

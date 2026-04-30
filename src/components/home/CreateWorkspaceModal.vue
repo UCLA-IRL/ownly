@@ -68,12 +68,19 @@ const opts = ref({
   name: String(),
 });
 
+function deriveIdentityFromKeyName(keyName: string): string {
+  const parts = keyName.split('/').filter(Boolean);
+  if (parts.length < 3) return keyName;
+  return '/' + parts.slice(0, -2).join('/');
+}
+
 // Name we intend to give the workspace
 const fullName = computed(() => `${idName.value}/${opts.value.name.trim()}`);
 
 // No need to reset these values on show
 onMounted(async () => {
-  idName.value = await ndn.api.get_identity_name();
+  const testbedKey = await ndn.api.get_testbed_key();
+  idName.value = deriveIdentityFromKeyName(testbedKey);
 });
 
 async function create() {
@@ -91,7 +98,7 @@ async function create() {
     }
 
     // Join the workspace with attempt to create
-    const finalName = await Workspace.join(label, fullName.value, true, false, null);
+    const finalName = await Workspace.join(label, fullName.value, true, false, null, null);
 
     emit('create', finalName);
     emit('close');

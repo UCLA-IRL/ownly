@@ -13,9 +13,11 @@ type Message struct {
 	//+field:struct:DSKACK
 	DSKACK *DSKACK `tlv:"0xCE"`
 	//+field:struct:RefreshPing
-	RefreshPing *RefreshPing `tlv:"0xD6"`
+	RefreshPing *RefreshPing `tlv:"0xD0"`
 	//+field:struct:RefreshPong
-	RefreshPong *RefreshPong `tlv:"0xD8"`
+	RefreshPong *RefreshPong `tlv:"0xD2"`
+	//+field:struct:BootJoin
+	BootJoin *BootJoin `tlv:"0xD6"`
 }
 
 type AeadBlock struct {
@@ -71,4 +73,11 @@ type RefreshPong struct {
 	Freshness uint64 `tlv:"0x5A6"`
 	//+field:string
 	SentAt string `tlv:"0x5A8"`
+}
+
+type BootJoin struct {
+	//+field:binary
+	PreCertFullName []byte `tlv:"0x580"`
+	//+field:binary
+	AppPayload []byte `tlv:"0x582"`
 }

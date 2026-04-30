@@ -7,7 +7,7 @@
         :text="loadStatus"
       />
 
-      <div class="box anim-rtl-fade p-4" v-else-if="!showSuccess">
+      <div class="box anim-rtl-fade p-4" v-else-if="flowStep === 'auth'">
         <div class="header is-size-4 has-text-weight-semibold">Get started</div>
         <p class="subtitle mt-1">
           Choose the authentication method that works best for you.
@@ -181,10 +181,110 @@
         </div>
       </div>
 
+      <div class="box anim-rtl-fade p-4" v-else-if="flowStep === 'identity'">
+        <div class="header is-size-4 has-text-weight-semibold">Add your Identity Secret</div>
+        <p class="subtitle mt-1">
+          Import an existing Identity Secret or generate a new one for <code>{{ identityName || '--' }}</code>.
+        </p>
+
+        <div class="identity-card mt-4">
+          <div class="field">
+            <label class="label is-small">Identity Name</label>
+            <code class="identity-name">{{ identityName || '--' }}</code>
+          </div>
+
+          <div class="field mt-3">
+            <label>Import an existing Identity Secret (.ndnkey)</label>
+            <div class="file has-name is-boxed mt-2">
+              <label class="file-label">
+                <input
+                  class="file-input"
+                  type="file"
+                  accept=".ndnkey"
+                  @change="onIdentityFile"
+                />
+                <span class="file-cta">
+                  <span class="file-label">Choose file</span>
+                </span>
+                <span class="file-name">{{ identityFileName || 'No file selected' }}</span>
+              </label>
+            </div>
+            <button
+              class="button is-primary is-fullwidth mt-2 soft-if-dark"
+              :disabled="!identityFile || identityBusy"
+              @click="importIdentityFromFile"
+            >
+              {{ identityBusy && identityAction === 'import' ? 'Importing…' : 'Import existing key' }}
+            </button>
+            <button
+              class="button is-light is-fullwidth mt-2 soft-if-dark"
+              :disabled="identityBusy"
+              @click="openIdentityScanner"
+            >
+              Scan QR Code for Identity Secret
+            </button>
+            <p class="help is-info mt-2">
+              You will be prompted for the password to decrypt the QR export.
+            </p>
+          </div>
+
+          <div class="divider my-3"><span>or</span></div>
+
+          <button
+            class="button is-link is-fullwidth soft-if-dark"
+            :disabled="identityBusy"
+            @click="generateIdentityKey"
+          >
+            {{ identityBusy && identityAction === 'generate' ? 'Generating…' : 'Generate a new identity key' }}
+          </button>
+
+          <p class="help is-danger mt-2" v-if="identityError">{{ identityError }}</p>
+          <p class="help is-info mt-1">
+            Identity Secrets are only used to authenticate you when you join a workspace. They are never used to secure application data.
+          </p>
+        </div>
+      </div>
+
       <div class="anim-rtl-fade p-4 has-text-centered" v-else>
         <FontAwesomeIcon class="success" :icon="faCircleCheck" />
       </div>
     </Transition>
+
+    <QrModal
+      :show="showIdentityScanner"
+      mode="scan"
+      title="Scan encrypted identity QR"
+      message="Point the camera at the password-protected identity QR code. You'll be asked for the password."
+      @decoded="onIdentityScan"
+      @close="showIdentityScanner = false"
+    />
+
+    <ModalComponent :show="showSecretPasswordModal" @close="closePasswordModal">
+      <div class="title is-5 mb-3">Decrypt Identity Secret</div>
+      <p class="mb-3">Enter the password used when generating the encrypted Identity Secret QR.</p>
+      <div class="field">
+        <label class="label is-small">Password</label>
+        <div class="control">
+          <input
+            class="input"
+            type="password"
+            autocomplete="current-password"
+            v-model="secretPassword"
+            :disabled="identityBusy"
+            @keyup.enter="confirmPasswordImport"
+          />
+        </div>
+      </div>
+      <div class="field has-text-right">
+        <button class="button mr-2" type="button" :disabled="identityBusy" @click="closePasswordModal">
+          Cancel
+        </button>
+        <button class="button is-primary" type="button" :disabled="!secretPassword || identityBusy" @click="confirmPasswordImport">
+          {{ identityBusy && identityAction === 'import' ? 'Importing…' : 'Import key' }}
+        </button>
+      </div>
+      <p class="help is-danger mt-2" v-if="identityError">{{ identityError }}</p>
+    </ModalComponent>
   </div>
 </template>
 
@@ -204,13 +304,28 @@ import {
 import * as utils from '@/utils/index';
 import ndn from '@/services/ndn';
 import { Toast } from '@/utils/toast';
+import QrModal from '@/components/QrModal.vue';
+import ModalComponent from '@/components/ModalComponent.vue';
+import { describeIdentityKeyImportError } from '@/utils/identity-errors';
+import { decryptSecretPayload } from '@/utils/qr-crypto';
 
 const emit = defineEmits(['login', 'ready']);
 
 const showLoading = ref(true);
-const showSuccess = ref(false);
+const flowStep = ref<'auth' | 'identity' | 'done'>('auth');
 
 const loadStatus = ref(String());
+
+const identityName = ref(String());
+const identityFile = ref<File | null>(null);
+const identityFileName = ref(String());
+const identityError = ref(String());
+const identityBusy = ref(false);
+const identityAction = ref<null | 'import' | 'generate'>(null);
+const showIdentityScanner = ref(false);
+const showSecretPasswordModal = ref(false);
+const secretPassword = ref('');
+const scannedSecretPayload = ref<string | null>(null);
 
 const authMethod = ref<'email' | 'dns'>('email');
 const methodSwitchDisabled = computed(
@@ -324,9 +439,7 @@ async function startEmailChallenge() {
     });
 
     loadStatus.value = 'Certified!';
-    showLoading.value = false;
-    showSuccess.value = true;
-    setTimeout(() => emit('login'), 1500);
+    await proceedToIdentitySetup();
   } catch (err) {
     Toast.error('Failed to complete challenge');
     console.error(err);
@@ -390,9 +503,7 @@ async function startDnsChallenge() {
     });
 
     loadStatus.value = 'Certified!';
-    showLoading.value = false;
-    showSuccess.value = true;
-    setTimeout(() => emit('login'), 1500);
+    await proceedToIdentitySetup();
   } catch (err) {
     Toast.error('Failed to complete challenge');
     console.error(err);
@@ -415,6 +526,121 @@ function dnsConfirm() {
   resolver('ready');
 }
 
+async function proceedToIdentitySetup() {
+  try {
+    loadStatus.value = 'Preparing identity key ...';
+    const overview = await ndn.api.list_identity_keys();
+    identityName.value = overview.identity;
+    showLoading.value = false;
+
+    if (overview.local?.length) {
+      finishLogin();
+      return;
+    }
+
+    flowStep.value = 'identity';
+    emit('ready');
+  } catch (err) {
+    console.error(err);
+    identityError.value = 'Unable to load identity details. Please try again.';
+    showLoading.value = false;
+    flowStep.value = 'identity';
+  }
+}
+
+function finishLogin() {
+  flowStep.value = 'done';
+  showLoading.value = false;
+  setTimeout(() => emit('login'), 800);
+}
+
+function onIdentityFile(event: Event) {
+  const target = event.target as HTMLInputElement | null;
+  const file = target?.files?.[0] ?? null;
+  identityFile.value = file;
+  identityFileName.value = file?.name ?? '';
+  identityError.value = '';
+}
+
+async function importIdentityFromFile() {
+  if (!identityFile.value) {
+    identityError.value = 'Select a key file to import';
+    return;
+  }
+
+  identityBusy.value = true;
+  identityAction.value = 'import';
+  identityError.value = '';
+  try {
+    const buffer = await identityFile.value.arrayBuffer();
+    await ndn.api.import_identity_key(new Uint8Array(buffer));
+    finishLogin();
+  } catch (err) {
+    console.error(err);
+    const message = describeIdentityKeyImportError(err);
+    identityError.value = `Failed to import identity key: ${message}`;
+  } finally {
+    identityBusy.value = false;
+    identityAction.value = null;
+  }
+}
+
+async function generateIdentityKey() {
+  identityBusy.value = true;
+  identityAction.value = 'generate';
+  identityError.value = '';
+  try {
+    await ndn.api.generate_identity_key();
+    finishLogin();
+  } catch (err) {
+    console.error(err);
+    identityError.value = 'Unable to generate identity key. Please try again.';
+  } finally {
+    identityBusy.value = false;
+    identityAction.value = null;
+  }
+}
+
+function openIdentityScanner() {
+  identityError.value = '';
+  showIdentityScanner.value = true;
+}
+
+async function onIdentityScan(raw: string) {
+  showIdentityScanner.value = false;
+  scannedSecretPayload.value = raw;
+  secretPassword.value = '';
+  showSecretPasswordModal.value = true;
+}
+
+function closePasswordModal() {
+  if (identityBusy.value) return;
+  showSecretPasswordModal.value = false;
+  scannedSecretPayload.value = null;
+  secretPassword.value = '';
+}
+
+async function confirmPasswordImport() {
+  if (!scannedSecretPayload.value || !secretPassword.value) return;
+
+  identityBusy.value = true;
+  identityAction.value = 'import';
+  identityError.value = '';
+  try {
+    const secret = await decryptSecretPayload(scannedSecretPayload.value, secretPassword.value);
+    await ndn.api.import_identity_key(secret);
+    closePasswordModal();
+    finishLogin();
+  } catch (err) {
+    console.error(err);
+    const message = describeIdentityKeyImportError(err);
+    identityError.value = `Failed to import identity key: ${message}`;
+  } finally {
+    identityBusy.value = false;
+    identityAction.value = null;
+  }
+}
+
 async function setup() {
   try {
     loadStatus.value = 'Setting up NDN service ...';
@@ -427,19 +653,19 @@ async function setup() {
       if (isExpiringSoon) {
         console.log('latest certificate is expiring soon');
         showLoading.value = false;
+        flowStep.value = 'auth';
         authMethod.value = 'email';
         emailStep.value = 'input';
         emit('ready');
         return;
       }
 
-      showLoading.value = false;
-      showSuccess.value = true;
-      setTimeout(() => emit('login'), 250);
+      await proceedToIdentitySetup();
       return;
     }
 
     showLoading.value = false;
+    flowStep.value = 'auth';
     emailStep.value = 'input';
     dnsStep.value = 'input';
     authMethod.value = 'email';
@@ -563,6 +789,51 @@ async function copyValue(value: string, label: string) {
   margin-top: 0.2rem;
   font-size: 0.95rem;
   word-break: break-word;
+}
+
+.identity-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.identity-name {
+  display: inline-block;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.divider {
+  position: relative;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.85rem;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 42%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.divider::before {
+  left: 0;
+}
+
+.divider::after {
+  right: 0;
+}
+
+.divider span {
+  padding: 0 8px;
+  background: transparent;
 }
 
 .dns-record code.value {

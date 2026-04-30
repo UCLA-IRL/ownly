@@ -119,7 +119,7 @@ export class Toast {
         enter: 'fade-toast--enter--disabled',
         exit: 'fade-toast--leave',
       },
-      clearOnUrlChange: false,
+      clearOnUrlChange: true,
     } as {
       theme: 'dark' | 'light';
       position: 'bottom-right';

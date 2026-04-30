@@ -9,6 +9,7 @@ import { encodeMlsIdentity } from '@/services/mls-identity';
 
 import { GlobalBus } from '@/services/event-bus';
 import * as utils from '@/utils/index';
+import { Toast } from '@/utils/toast';
 
 import type { SvsAloApi, WorkspaceAPI, RefreshPongPub, RefreshPingPub } from '@/services/ndn';
 import type { Router } from 'vue-router';
@@ -67,8 +68,19 @@ export class Workspace {
     // Set up workspace API and client
     let api: WorkspaceAPI | null = null;
     try {
+
       api = await ndn.api.get_workspace(metadata.name, metadata.ignore);
       await api.start();
+
+      // Wait until user key is ready before proceeding; toast follows route changes.
+      const certToast = Toast.loading('Waiting for certificate issuance. You may quit while waiting for workspace creators to respond...');
+      try {
+        await ndn.api.wait_user_key(metadata.name);
+        await certToast.success('Certificate Ready');
+      } catch (err) {
+        await certToast.error(`Certificate wait failed: ${err}`);
+        throw err;
+      }
 
       // Check if we have the encryption keys
       if (!metadata.psk) throw new Error('Missing PSK');
@@ -425,13 +437,17 @@ export class Workspace {
    * @param label Display name
    * @param wksp Workspace name
    * @param create Create the workspace if it does not exist
+   * @param ignore Ignore validity checks while consuming workspace data
    * @param psk Pre-shared key for encryption
+   * @param payload App-defined payload passed to boot sync; pass null when unused
    */
   public static async join(
     label: string,
     wksp: string,
-    create: boolean, ignore: boolean,
+    create: boolean,
+    ignore: boolean,
     psk: Uint8Array | null,
+    payload: Uint8Array | null,
   ): Promise<string> {
     const metadata = await _o.stats.get(wksp);
     if (metadata) throw new Error('You have already joined this workspace');
@@ -449,7 +465,7 @@ export class Workspace {
     if (create && dsk) globalThis.crypto.getRandomValues(dsk);
 
     // Join workspace - this will check invitation etc.
-    const finalName = await ndn.api.join_workspace(wksp, create);
+    const finalName = await ndn.api.join_workspace(wksp, create, payload);
 
     // Check if we have the owner permissions
     const isOwner = await ndn.api.is_workspace_owner(finalName);

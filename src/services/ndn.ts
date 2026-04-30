@@ -27,8 +27,30 @@ interface NDNAPI {
   has_testbed_key(): Promise<boolean>;
   /** Check if the testbed certificate is expiring soon (within a week) */
   is_testbed_cert_expiring_soon(): Promise<boolean>;
-  /** Get the user's identity key */
-  get_identity_name(): Promise<string>;
+  /** Get the full testbed key name */
+  get_testbed_key(): Promise<string>;
+  /** List locally managed identity keys and authenticated peer identities */
+  list_identity_keys(): Promise<{
+    identity: string;
+    local: IdentityKeyInfo[];
+    peers: IdentityKeyInfo[];
+  }>;
+  /** Generate a new managed identity key pair */
+  generate_identity_key(): Promise<IdentityKeyInfo>;
+  /** Import an existing identity key pair (MarshalSecret format) */
+  import_identity_key(secret: Uint8Array): Promise<IdentityKeyInfo>;
+  /** Import peer self-signed certificates */
+  import_peer_certs(blobs: Uint8Array[]): Promise<IdentityKeyInfo[]>;
+  /** Delete a managed identity or peer entry */
+  delete_identity_entry(certName: string): Promise<void>;
+  /** Export a managed identity key pair as MarshalSecret */
+  export_identity_secret(keyName: string): Promise<Uint8Array>;
+  /** Export authenticated peer certificates */
+  export_peer_certs(names: string[]): Promise<Uint8Array[]>;
+  /** Export your identity certificate (self-signed) */
+  export_identity_cert(): Promise<Uint8Array>;
+  /** Export a managed identity certificate by name */
+  export_identity_cert_by_name(certName: string): Promise<Uint8Array>;
 
   /** Connect to the global NDN testbed */
   connect_testbed(): Promise<void>;
@@ -42,13 +64,39 @@ interface NDNAPI {
   ): Promise<void>;
 
   /** Join Workspace (generate keys etc.) */
-  join_workspace(wksp: string, create: boolean): Promise<string>;
+  join_workspace(wksp: string, create: boolean, payload: Uint8Array | null): Promise<string>;
   /** Check if the user has owner permissions on the workspace */
   is_workspace_owner(wksp: string): Promise<boolean>;
+
+  /** Wait until a user key is ready for the workspace */
+  wait_user_key(wksp: string): Promise<void>;
+
+  /** Set callbacks to load and persist boot sync state */
+  load_boot_state(
+    load: (group: string) => Promise<Uint8Array | undefined>,
+    persist: (group: string, state: Uint8Array) => Promise<void>,
+  ): Promise<void>;
+  /** Callback for owner receiving participant boot-join app payload */
+  on_boot_join_payload(
+    cb: (
+      workspace: string,
+      preCertFullName: string,
+      preCertKeyName: string,
+      payload: Uint8Array,
+    ) => Promise<void>,
+  ): Promise<void>;
 
   /** Get a Workspace API */
   get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
 }
+
+export type IdentityKeyInfo = {
+  identity: string;
+  keyName: string;
+  certName: string;
+  hasPrivate: boolean;
+  source: 'local' | 'peer';
+};
 
 export interface WorkspaceAPI {
   /** Name of this user / node */
@@ -80,8 +128,8 @@ export interface WorkspaceAPI {
     persist_state: (state: Uint8Array) => Promise<void>,
   ): Promise<SvsAloApi>;
 
-  /** Sign an invitation for a given NDN name */
-  sign_invitation(invitee: string): Promise<Uint8Array>;
+  /** Sign and publish an invitation for a given NDN name */
+  sign_and_pub_invitation(invitee: string): Promise<Uint8Array>;
 
   /** Wait for DSK to appear for the given key */
   wait_for_dsk(key: Uint8Array): Promise<Uint8Array>;
@@ -213,6 +261,50 @@ class NDNService {
       );
     });
     this.api = await ndnPromise;
+
+    const bootState = globalThis._o?.bootState;
+    if (bootState && typeof this.api.load_boot_state === 'function') {
+      try {
+        await this.api.load_boot_state(
+          async (group: string) => {
+            try {
+              const state = await bootState.get(group);
+              if (!state || state.length === 0) return undefined;
+              return state;
+            } catch (err) {
+              console.error('Failed to load boot state', err);
+              return undefined;
+            }
+          },
+          async (group: string, state: Uint8Array) => {
+            try {
+              await bootState.put(group, state);
+            } catch (err) {
+              console.error('Failed to persist boot state', err);
+            }
+          },
+        );
+      } catch (err) {
+        console.error('Failed to register boot state persistence', err);
+      }
+    }
+
+    if (typeof this.api.on_boot_join_payload === 'function') {
+      try {
+        await this.api.on_boot_join_payload(
+          async (
+            workspace: string,
+            preCertFullName: string,
+            preCertKeyName: string,
+            payload: Uint8Array,
+          ) => {
+            GlobalBus.emit('boot-join-payload', workspace, preCertFullName, preCertKeyName, payload);
+          },
+        );
+      } catch (err) {
+        console.error('Failed to register boot join payload callback', err);
+      }
+    }
   }
 }
 

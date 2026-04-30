@@ -14,6 +14,7 @@ import crypto from 'crypto';
 
 import { NodeStatsDb } from '../services/database/stats_node';
 import { NodeProjDb } from '../services/database/proj_db_node';
+import { NodeBootStateDb } from '../services/database/boot_db_node';
 import { getOriginPrivateDirectory } from 'file-system-access';
 import nodeAdapter from 'file-system-access/lib/adapters/node.js';
 
@@ -25,6 +26,7 @@ async function loadServices() {
   globalThis._o = {
     stats: new NodeStatsDb(),
     ProjDb: NodeProjDb,
+    bootState: new NodeBootStateDb(),
 
     getStorageRoot: () => getOriginPrivateDirectory(nodeAdapter, './'),
     streamSaver: null as any, // no node
@@ -48,7 +50,7 @@ async function loadGoEnvironment() {
 async function setupWorkspace(wkspName: string): Promise<Workspace> {
   // Join the workspace if not already joined
   const wkspMeta = await globalThis._o.stats.get(wkspName);
-  if (!wkspMeta) await Workspace.join(wkspName, wkspName, false);
+  if (!wkspMeta) await Workspace.join(wkspName, wkspName, false, false, null, null);
 
   // Setup the workspace
   return await Workspace.setup(utils.escapeUrlName(wkspName));
