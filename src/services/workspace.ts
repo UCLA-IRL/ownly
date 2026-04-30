@@ -5,11 +5,12 @@ import {WorkspaceAgentManager} from './workspace-agent'
 
 import ndn from '@/services/ndn';
 import { SvsProvider } from '@/services/svs-provider';
+import { encodeMlsIdentity } from '@/services/mls-identity';
 
 import { GlobalBus } from '@/services/event-bus';
 import * as utils from '@/utils/index';
 
-import type { SvsAloApi, WorkspaceAPI, RefreshAckPub, RefreshPingPub, RefreshRequestPub } from '@/services/ndn';
+import type { SvsAloApi, WorkspaceAPI, RefreshPongPub, RefreshPingPub } from '@/services/ndn';
 import type { Router } from 'vue-router';
 import type { IWkspStats } from '@/services/types';
 
@@ -30,12 +31,11 @@ export class Workspace {
   private static readonly REFRESH_STATE_TTL_MS = 60_000;
 
   private readonly refreshUnsubs = Array<() => void>();
-  private readonly pendingRefreshAcks = new Map<string, {
+  private readonly pendingRefreshPongs = new Map<string, {
     createdAt: number;
-    responders: Map<string, RefreshAckPub>;
+    responders: Map<string, RefreshPongPub>;
   }>();
   private readonly seenRefreshPings = new Map<string, number>();
-  private readonly seenRefreshReqs = new Map<string, number>();
 
   private constructor(
     public readonly metadata: IWkspStats,
@@ -47,6 +47,13 @@ export class Workspace {
     public readonly agent: WorkspaceAgentManager | null,
   ) {}
 
+  private currentDeviceIdentity(): string {
+    if (!this.metadata.deviceId) {
+      throw new Error('Missing local device ID');
+    }
+    return encodeMlsIdentity(this.api.name, this.metadata.deviceId);
+  }
+
   /**
    * Start the workspace.
    * This will connect to the testbed and start the SVS instance.
@@ -54,6 +61,8 @@ export class Workspace {
   private static async create(metadata: IWkspStats): Promise<Workspace> {
     // Start connection to testbed
     await ndn.api.connect_testbed();
+
+    await Workspace.ensureDeviceMetadata(metadata);
 
     // Set up workspace API and client
     let api: WorkspaceAPI | null = null;
@@ -79,6 +88,10 @@ export class Workspace {
       // Create workspace object first (without agent)
       const workspace = new Workspace(metadata, api, provider, chat, proj, invite, null);
       workspace.registerRefreshHandlers();
+      await api.set_on_refresh_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
+        console.log('received directed refresh request', { requestId, requester });
+        await workspace.republishEncryptedState();
+      });
 
       // Then create agent with workspace reference
       const agent = await WorkspaceAgentManager.create(api, provider, workspace);
@@ -105,9 +118,8 @@ export class Workspace {
       off();
     }
     this.refreshUnsubs.length = 0;
-    this.pendingRefreshAcks.clear();
+    this.pendingRefreshPongs.clear();
     this.seenRefreshPings.clear();
-    this.seenRefreshReqs.clear();
     await this.provider?.destroy();
     if (this.agent) {
       await this.agent.destroy();
@@ -121,84 +133,64 @@ export class Workspace {
       this.provider.onRefreshPing((pubs) => this.handleRefreshPing(pubs)),
     );
     this.refreshUnsubs.push(
-      this.provider.onRefreshAck((pubs) => this.handleRefreshAck(pubs)),
-    );
-    this.refreshUnsubs.push(
-      this.provider.onRefreshReq((pubs) => this.handleRefreshReq(pubs)),
+      this.provider.onRefreshPong((pubs) => this.handleRefreshPong(pubs)),
     );
   }
 
   private async handleRefreshPing(pubs: RefreshPingPub[]): Promise<void> {
     const now = Date.now();
     this.pruneRefreshState(now);
+    const currentIdentity = this.currentDeviceIdentity();
 
     for (const pub of pubs) {
       if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
-      if (pub.requester === this.api.name) continue;
+      if (pub.requester === currentIdentity) continue;
       if (this.seenRefreshPings.has(pub.request_id)) continue;
 
       this.seenRefreshPings.set(pub.request_id, now);
-      await this.provider.svs.pub_refresh_ack(
+      await this.provider.svs.pub_refresh_pong(
         pub.request_id,
         pub.requester,
-        this.api.name,
+        currentIdentity,
         Math.floor(Date.now() / 1000),
         new Date().toISOString(),
       );
     }
   }
 
-  private async handleRefreshAck(pubs: RefreshAckPub[]): Promise<void> {
+  private async handleRefreshPong(pubs: RefreshPongPub[]): Promise<void> {
     this.pruneRefreshState();
+    const currentIdentity = this.currentDeviceIdentity();
 
     for (const pub of pubs) {
       if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
-      if (pub.requester !== this.api.name) continue;
+      if (pub.requester !== currentIdentity) continue;
 
-      const entry = this.pendingRefreshAcks.get(pub.request_id);
+      const entry = this.pendingRefreshPongs.get(pub.request_id);
       if (!entry) continue;
 
       entry.responders.set(pub.responder, pub);
     }
   }
 
-  private async handleRefreshReq(pubs: RefreshRequestPub[]): Promise<void> {
-    const now = Date.now();
-    this.pruneRefreshState(now);
-
-    for (const pub of pubs) {
-      if (this.isRefreshExpired(pub.sent_at, Workspace.REFRESH_MAX_AGE_MS)) continue;
-      if (pub.responder !== this.api.name) continue;
-
-      if (this.seenRefreshReqs.has(pub.request_id)) continue;
-
-      this.seenRefreshReqs.set(pub.request_id, now);
-      console.log('accepted refresh request', {
-        request_id: pub.request_id,
-        requester: pub.requester,
-        responder: pub.responder,
-      });
-      await this.republishEncryptedState();
-    }
-  }
-
   public async sendRefreshPing(): Promise<string> {
     const now = Date.now();
     this.pruneRefreshState(now);
+    const currentIdentity = this.currentDeviceIdentity();
 
     const requestId = crypto.randomUUID();
-    this.pendingRefreshAcks.set(requestId, {
+    this.pendingRefreshPongs.set(requestId, {
       createdAt: now,
       responders: new Map(),
     });
 
     console.log('sending refresh ping', {
       request_id: requestId,
-      requester: this.api.name,
+      requester: currentIdentity,
     });
     await this.provider.svs.pub_refresh_ping(
       requestId,
-      this.api.name,
+      currentIdentity,
       new Date().toISOString(),
     );
 
@@ -212,52 +204,84 @@ export class Workspace {
   public async sosRequest(timeoutMs = 3_000, pollMs = 200): Promise<{ requestId: string; responder: string }> {
     const requestId = await this.sendRefreshPing();
     const deadline = Date.now() + timeoutMs;
+    const attemptedResponders = new Set<string>();
+    let sawResponder = false;
 
+    try {
     while (Date.now() < deadline) {
-      const responders = this.getRefreshResponders(requestId);
-      if (responders.length > 0) {
-        const chosen = responders[0];
+        const responders = this.getRefreshResponders(requestId)
+          .filter((pub) => !attemptedResponders.has(pub.responder));
 
-        console.log('auto-selected SOS responder', {
+        if (responders.length === 0) {
+          await this.sleep(pollMs);
+          continue;
+        }
+
+        sawResponder = true;
+        for (const responder of responders) {
+          attemptedResponders.add(responder.responder);
+          console.log('trying SOS responder', {
           request_id: requestId,
-          requester: this.api.name,
-          responder: chosen.responder,
+            requester: this.currentDeviceIdentity(),
+            responder: responder.responder,
         });
 
-        await this.requestRefresh(requestId, chosen.responder);
-        this.pendingRefreshAcks.delete(requestId);
+          try {
+            const status = await this.requestRefresh(requestId, responder.responder);
+            if (status === 'ok') {
         return {
           requestId,
-          responder: chosen.responder,
+                responder: responder.responder,
         };
+            }
+
+            console.warn('SOS responder reported refresh failure', {
+              request_id: requestId,
+              requester: this.currentDeviceIdentity(),
+              responder: responder.responder,
+            });
+          } catch (e) {
+            console.warn('SOS responder request failed', {
+              request_id: requestId,
+              requester: this.currentDeviceIdentity(),
+              responder: responder.responder,
+              err: e,
+            });
+          }
       }
 
       await this.sleep(pollMs);
+      }
+    } finally {
+      this.pendingRefreshPongs.delete(requestId);
     }
 
+    if (!sawResponder) {
     throw new Error('No online responder acknowledged the SOS request');
   }
 
-  public getRefreshResponders(requestId: string): RefreshAckPub[] {
+    throw new Error('All online responders failed to republish the SOS request');
+  }
+
+  public getRefreshResponders(requestId: string): RefreshPongPub[] {
     this.pruneRefreshState();
 
-    const entry = this.pendingRefreshAcks.get(requestId);
+    const entry = this.pendingRefreshPongs.get(requestId);
     return entry ? Array.from(entry.responders.values()) : [];
   }
 
-  public async requestRefresh(requestId: string, responder: string): Promise<void> {
-    await this.provider.svs.pub_refresh_req(
-      requestId,
-      this.api.name,
-      responder,
-      new Date().toISOString(),
-    );
+  private refreshReqName(responder: string, requestId: string): string {
+    return `${utils.normalizePath(this.api.group)}/root/32=REFRESH_REQ${utils.normalizePath(responder)}/${requestId}${utils.normalizePath(this.currentDeviceIdentity())}`;
+  }
+
+  public async requestRefresh(requestId: string, responder: string): Promise<'ok' | 'fail'> {
+    return await this.api.send_refresh_req(this.refreshReqName(responder, requestId));
   }
 
   private pruneRefreshState(now = Date.now()): void {
-    for (const [requestId, entry] of this.pendingRefreshAcks) {
+    for (const [requestId, entry] of this.pendingRefreshPongs) {
       if (now - entry.createdAt > Workspace.REFRESH_STATE_TTL_MS) {
-        this.pendingRefreshAcks.delete(requestId);
+        this.pendingRefreshPongs.delete(requestId);
       }
     }
 
@@ -267,11 +291,6 @@ export class Workspace {
       }
     }
 
-    for (const [requestId, seenAt] of this.seenRefreshReqs) {
-      if (now - seenAt > Workspace.REFRESH_STATE_TTL_MS) {
-        this.seenRefreshReqs.delete(requestId);
-      }
-    }
   }
 
   private isRefreshExpired(sentAt: string, maxAgeMs = 30_000): boolean {
@@ -302,20 +321,23 @@ export class Workspace {
   }
 
   /**
-   * Republish the current encrypted Yjs state as a manual recovery action for clients 
-   * that appear to be stuck on stale encrypted history or snapshot state.
+   * Republish the currently encrypted Yjs state under the active workspace key.
+   * This is used after owner-driven MLS session changes so late or idle
+   * members can recover the current encrypted state under the new session.
    */
   public async republishEncryptedState(): Promise<void> {
     await this.provider.republishEncryptedState();
     await this.proj.republishEncryptedState();
     console.log('finished workspace encrypted-state republish', {
       workspace: this.metadata.name,
-      responder: this.api.name,
+      responder: this.currentDeviceIdentity(),
     });
   }
 
   /**
    * Manually force a fresh encrypted-state republish for the workspace.
+   * This is intended as an owner-operated recovery action when clients appear
+   * to be stuck on stale encrypted history/snapshots.
    */
   public async forceSnapshotUpdate(): Promise<void> {
     if (!this.metadata.owner) {
@@ -439,6 +461,7 @@ export class Workspace {
       owner: isOwner,
       ignore: ignore,
       pendingSetup: create ? true : undefined,
+      deviceId: globalThis.crypto.randomUUID(),
       psk: utils.toHex(psk),
       dsk: dsk ? utils.toHex(dsk) : null,
     });
@@ -486,6 +509,19 @@ export class Workspace {
       throw new Error(`No DSK, try again later when others are online: ${e}`);
     } finally {
       rootSvs?.stop();
+    }
+  }
+
+  private static async ensureDeviceMetadata(metadata: IWkspStats): Promise<void> {
+    let changed = false;
+
+    if (!metadata.deviceId) {
+      metadata.deviceId = globalThis.crypto.randomUUID();
+      changed = true;
+    }
+
+    if (changed) {
+      await _o.stats.put(metadata.name, metadata);
     }
   }
 }

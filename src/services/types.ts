@@ -11,6 +11,7 @@ export type IWkspStats = {
   pendingSetup?: boolean;
   /** Last access time */
   lastAccess?: number;
+  deviceId?: string;
 
   /** Pre-shared key */
   psk: string;
@@ -18,6 +19,12 @@ export type IWkspStats = {
   dsk: string | null;
   /** DSK request key */
   dskExch?: string;
+};
+
+export type IOwnerDeviceRecord = {
+  deviceId: string;
+  label: string;
+  registeredAt: number;
 };
 
 export type IChatMessage = {
@@ -130,4 +137,3 @@ export interface IAgentChannel {
   /** Reference to the agent card by its URL (used as ID) */
   agentId: string;
 }
-
