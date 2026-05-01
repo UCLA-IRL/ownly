@@ -12,27 +12,25 @@ import (
 type MessageEncoder struct {
 	Length uint
 
-	AeadBlock_encoder      AeadBlockEncoder
-	YjsDelta_encoder       YjsDeltaEncoder
-	DSKRequest_encoder     DSKRequestEncoder
-	DSKResponse_encoder    DSKResponseEncoder
-	DSKACK_encoder         DSKACKEncoder
-	RefreshPing_encoder    RefreshPingEncoder
-	RefreshAck_encoder     RefreshAckEncoder
-	RefreshRequest_encoder RefreshRequestEncoder
-	BootJoin_encoder       BootJoinEncoder
+	AeadBlock_encoder   AeadBlockEncoder
+	YjsDelta_encoder    YjsDeltaEncoder
+	DSKRequest_encoder  DSKRequestEncoder
+	DSKResponse_encoder DSKResponseEncoder
+	DSKACK_encoder      DSKACKEncoder
+	RefreshPing_encoder RefreshPingEncoder
+	RefreshPong_encoder RefreshPongEncoder
+	BootJoin_encoder    BootJoinEncoder
 }
 
 type MessageParsingContext struct {
-	AeadBlock_context      AeadBlockParsingContext
-	YjsDelta_context       YjsDeltaParsingContext
-	DSKRequest_context     DSKRequestParsingContext
-	DSKResponse_context    DSKResponseParsingContext
-	DSKACK_context         DSKACKParsingContext
-	RefreshPing_context    RefreshPingParsingContext
-	RefreshAck_context     RefreshAckParsingContext
-	RefreshRequest_context RefreshRequestParsingContext
-	BootJoin_context       BootJoinParsingContext
+	AeadBlock_context   AeadBlockParsingContext
+	YjsDelta_context    YjsDeltaParsingContext
+	DSKRequest_context  DSKRequestParsingContext
+	DSKResponse_context DSKResponseParsingContext
+	DSKACK_context      DSKACKParsingContext
+	RefreshPing_context RefreshPingParsingContext
+	RefreshPong_context RefreshPongParsingContext
+	BootJoin_context    BootJoinParsingContext
 }
 
 func (encoder *MessageEncoder) Init(value *Message) {
@@ -54,11 +52,8 @@ func (encoder *MessageEncoder) Init(value *Message) {
 	if value.RefreshPing != nil {
 		encoder.RefreshPing_encoder.Init(value.RefreshPing)
 	}
-	if value.RefreshAck != nil {
-		encoder.RefreshAck_encoder.Init(value.RefreshAck)
-	}
-	if value.RefreshRequest != nil {
-		encoder.RefreshRequest_encoder.Init(value.RefreshRequest)
+	if value.RefreshPong != nil {
+		encoder.RefreshPong_encoder.Init(value.RefreshPong)
 	}
 	if value.BootJoin != nil {
 		encoder.BootJoin_encoder.Init(value.BootJoin)
@@ -95,15 +90,10 @@ func (encoder *MessageEncoder) Init(value *Message) {
 		l += uint(enc.TLNum(encoder.RefreshPing_encoder.Length).EncodingLength())
 		l += encoder.RefreshPing_encoder.Length
 	}
-	if value.RefreshAck != nil {
+	if value.RefreshPong != nil {
 		l += 1
-		l += uint(enc.TLNum(encoder.RefreshAck_encoder.Length).EncodingLength())
-		l += encoder.RefreshAck_encoder.Length
-	}
-	if value.RefreshRequest != nil {
-		l += 1
-		l += uint(enc.TLNum(encoder.RefreshRequest_encoder.Length).EncodingLength())
-		l += encoder.RefreshRequest_encoder.Length
+		l += uint(enc.TLNum(encoder.RefreshPong_encoder.Length).EncodingLength())
+		l += encoder.RefreshPong_encoder.Length
 	}
 	if value.BootJoin != nil {
 		l += 1
@@ -121,8 +111,7 @@ func (context *MessageParsingContext) Init() {
 	context.DSKResponse_context.Init()
 	context.DSKACK_context.Init()
 	context.RefreshPing_context.Init()
-	context.RefreshAck_context.Init()
-	context.RefreshRequest_context.Init()
+	context.RefreshPong_context.Init()
 	context.BootJoin_context.Init()
 }
 
@@ -184,22 +173,13 @@ func (encoder *MessageEncoder) EncodeInto(value *Message, buf []byte) {
 			pos += encoder.RefreshPing_encoder.Length
 		}
 	}
-	if value.RefreshAck != nil {
+	if value.RefreshPong != nil {
 		buf[pos] = byte(210)
 		pos += 1
-		pos += uint(enc.TLNum(encoder.RefreshAck_encoder.Length).EncodeInto(buf[pos:]))
-		if encoder.RefreshAck_encoder.Length > 0 {
-			encoder.RefreshAck_encoder.EncodeInto(value.RefreshAck, buf[pos:])
-			pos += encoder.RefreshAck_encoder.Length
-		}
-	}
-	if value.RefreshRequest != nil {
-		buf[pos] = byte(212)
-		pos += 1
-		pos += uint(enc.TLNum(encoder.RefreshRequest_encoder.Length).EncodeInto(buf[pos:]))
-		if encoder.RefreshRequest_encoder.Length > 0 {
-			encoder.RefreshRequest_encoder.EncodeInto(value.RefreshRequest, buf[pos:])
-			pos += encoder.RefreshRequest_encoder.Length
+		pos += uint(enc.TLNum(encoder.RefreshPong_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.RefreshPong_encoder.Length > 0 {
+			encoder.RefreshPong_encoder.EncodeInto(value.RefreshPong, buf[pos:])
+			pos += encoder.RefreshPong_encoder.Length
 		}
 	}
 	if value.BootJoin != nil {
@@ -231,8 +211,7 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	var handled_DSKResponse bool = false
 	var handled_DSKACK bool = false
 	var handled_RefreshPing bool = false
-	var handled_RefreshAck bool = false
-	var handled_RefreshRequest bool = false
+	var handled_RefreshPong bool = false
 	var handled_BootJoin bool = false
 
 	progress := -1
@@ -299,14 +278,8 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 			case 210:
 				if true {
 					handled = true
-					handled_RefreshAck = true
-					value.RefreshAck, err = context.RefreshAck_context.Parse(reader.Delegate(int(l)), ignoreCritical)
-				}
-			case 212:
-				if true {
-					handled = true
-					handled_RefreshRequest = true
-					value.RefreshRequest, err = context.RefreshRequest_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+					handled_RefreshPong = true
+					value.RefreshPong, err = context.RefreshPong_context.Parse(reader.Delegate(int(l)), ignoreCritical)
 				}
 			case 214:
 				if true {
@@ -350,11 +323,8 @@ func (context *MessageParsingContext) Parse(reader enc.WireView, ignoreCritical 
 	if !handled_RefreshPing && err == nil {
 		value.RefreshPing = nil
 	}
-	if !handled_RefreshAck && err == nil {
-		value.RefreshAck = nil
-	}
-	if !handled_RefreshRequest && err == nil {
-		value.RefreshRequest = nil
+	if !handled_RefreshPong && err == nil {
+		value.RefreshPong = nil
 	}
 	if !handled_BootJoin && err == nil {
 		value.BootJoin = nil
@@ -1304,14 +1274,14 @@ func ParseRefreshPing(reader enc.WireView, ignoreCritical bool) (*RefreshPing, e
 	return context.Parse(reader, ignoreCritical)
 }
 
-type RefreshAckEncoder struct {
+type RefreshPongEncoder struct {
 	Length uint
 }
 
-type RefreshAckParsingContext struct {
+type RefreshPongParsingContext struct {
 }
 
-func (encoder *RefreshAckEncoder) Init(value *RefreshAck) {
+func (encoder *RefreshPongEncoder) Init(value *RefreshPong) {
 
 	l := uint(0)
 	l += 3
@@ -1332,11 +1302,11 @@ func (encoder *RefreshAckEncoder) Init(value *RefreshAck) {
 
 }
 
-func (context *RefreshAckParsingContext) Init() {
+func (context *RefreshPongParsingContext) Init() {
 
 }
 
-func (encoder *RefreshAckEncoder) EncodeInto(value *RefreshAck, buf []byte) {
+func (encoder *RefreshPongEncoder) EncodeInto(value *RefreshPong, buf []byte) {
 
 	pos := uint(0)
 
@@ -1372,7 +1342,7 @@ func (encoder *RefreshAckEncoder) EncodeInto(value *RefreshAck, buf []byte) {
 	pos += uint(len(value.SentAt))
 }
 
-func (encoder *RefreshAckEncoder) Encode(value *RefreshAck) enc.Wire {
+func (encoder *RefreshPongEncoder) Encode(value *RefreshPong) enc.Wire {
 
 	wire := make(enc.Wire, 1)
 	wire[0] = make([]byte, encoder.Length)
@@ -1382,7 +1352,7 @@ func (encoder *RefreshAckEncoder) Encode(value *RefreshAck) enc.Wire {
 	return wire
 }
 
-func (context *RefreshAckParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*RefreshAck, error) {
+func (context *RefreshPongParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*RefreshPong, error) {
 
 	var handled_RequestId bool = false
 	var handled_Requester bool = false
@@ -1393,7 +1363,7 @@ func (context *RefreshAckParsingContext) Parse(reader enc.WireView, ignoreCritic
 	progress := -1
 	_ = progress
 
-	value := &RefreshAck{}
+	value := &RefreshPong{}
 	var err error
 	var startPos int
 	for {
@@ -1523,222 +1493,18 @@ func (context *RefreshAckParsingContext) Parse(reader enc.WireView, ignoreCritic
 	return value, nil
 }
 
-func (value *RefreshAck) Encode() enc.Wire {
-	encoder := RefreshAckEncoder{}
+func (value *RefreshPong) Encode() enc.Wire {
+	encoder := RefreshPongEncoder{}
 	encoder.Init(value)
 	return encoder.Encode(value)
 }
 
-func (value *RefreshAck) Bytes() []byte {
+func (value *RefreshPong) Bytes() []byte {
 	return value.Encode().Join()
 }
 
-func ParseRefreshAck(reader enc.WireView, ignoreCritical bool) (*RefreshAck, error) {
-	context := RefreshAckParsingContext{}
-	context.Init()
-	return context.Parse(reader, ignoreCritical)
-}
-
-type RefreshRequestEncoder struct {
-	Length uint
-}
-
-type RefreshRequestParsingContext struct {
-}
-
-func (encoder *RefreshRequestEncoder) Init(value *RefreshRequest) {
-
-	l := uint(0)
-	l += 3
-	l += uint(enc.TLNum(len(value.RequestId)).EncodingLength())
-	l += uint(len(value.RequestId))
-	l += 3
-	l += uint(enc.TLNum(len(value.Requester)).EncodingLength())
-	l += uint(len(value.Requester))
-	l += 3
-	l += uint(enc.TLNum(len(value.Responder)).EncodingLength())
-	l += uint(len(value.Responder))
-	l += 3
-	l += uint(enc.TLNum(len(value.SentAt)).EncodingLength())
-	l += uint(len(value.SentAt))
-	encoder.Length = l
-
-}
-
-func (context *RefreshRequestParsingContext) Init() {
-
-}
-
-func (encoder *RefreshRequestEncoder) EncodeInto(value *RefreshRequest, buf []byte) {
-
-	pos := uint(0)
-
-	buf[pos] = 253
-	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1440))
-	pos += 3
-	pos += uint(enc.TLNum(len(value.RequestId)).EncodeInto(buf[pos:]))
-	copy(buf[pos:], value.RequestId)
-	pos += uint(len(value.RequestId))
-	buf[pos] = 253
-	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1442))
-	pos += 3
-	pos += uint(enc.TLNum(len(value.Requester)).EncodeInto(buf[pos:]))
-	copy(buf[pos:], value.Requester)
-	pos += uint(len(value.Requester))
-	buf[pos] = 253
-	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1444))
-	pos += 3
-	pos += uint(enc.TLNum(len(value.Responder)).EncodeInto(buf[pos:]))
-	copy(buf[pos:], value.Responder)
-	pos += uint(len(value.Responder))
-	buf[pos] = 253
-	binary.BigEndian.PutUint16(buf[pos+1:], uint16(1446))
-	pos += 3
-	pos += uint(enc.TLNum(len(value.SentAt)).EncodeInto(buf[pos:]))
-	copy(buf[pos:], value.SentAt)
-	pos += uint(len(value.SentAt))
-}
-
-func (encoder *RefreshRequestEncoder) Encode(value *RefreshRequest) enc.Wire {
-
-	wire := make(enc.Wire, 1)
-	wire[0] = make([]byte, encoder.Length)
-	buf := wire[0]
-	encoder.EncodeInto(value, buf)
-
-	return wire
-}
-
-func (context *RefreshRequestParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*RefreshRequest, error) {
-
-	var handled_RequestId bool = false
-	var handled_Requester bool = false
-	var handled_Responder bool = false
-	var handled_SentAt bool = false
-
-	progress := -1
-	_ = progress
-
-	value := &RefreshRequest{}
-	var err error
-	var startPos int
-	for {
-		startPos = reader.Pos()
-		if startPos >= reader.Length() {
-			break
-		}
-		typ := enc.TLNum(0)
-		l := enc.TLNum(0)
-		typ, err = reader.ReadTLNum()
-		if err != nil {
-			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
-		}
-		l, err = reader.ReadTLNum()
-		if err != nil {
-			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
-		}
-
-		err = nil
-		if handled := false; true {
-			switch typ {
-			case 1440:
-				if true {
-					handled = true
-					handled_RequestId = true
-					{
-						var builder strings.Builder
-						_, err = reader.CopyN(&builder, int(l))
-						if err == nil {
-							value.RequestId = builder.String()
-						}
-					}
-				}
-			case 1442:
-				if true {
-					handled = true
-					handled_Requester = true
-					{
-						var builder strings.Builder
-						_, err = reader.CopyN(&builder, int(l))
-						if err == nil {
-							value.Requester = builder.String()
-						}
-					}
-				}
-			case 1444:
-				if true {
-					handled = true
-					handled_Responder = true
-					{
-						var builder strings.Builder
-						_, err = reader.CopyN(&builder, int(l))
-						if err == nil {
-							value.Responder = builder.String()
-						}
-					}
-				}
-			case 1446:
-				if true {
-					handled = true
-					handled_SentAt = true
-					{
-						var builder strings.Builder
-						_, err = reader.CopyN(&builder, int(l))
-						if err == nil {
-							value.SentAt = builder.String()
-						}
-					}
-				}
-			default:
-				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
-					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
-				}
-				handled = true
-				err = reader.Skip(int(l))
-			}
-			if err == nil && !handled {
-			}
-			if err != nil {
-				return nil, enc.ErrFailToParse{TypeNum: typ, Err: err}
-			}
-		}
-	}
-
-	startPos = reader.Pos()
-	err = nil
-
-	if !handled_RequestId && err == nil {
-		err = enc.ErrSkipRequired{Name: "RequestId", TypeNum: 1440}
-	}
-	if !handled_Requester && err == nil {
-		err = enc.ErrSkipRequired{Name: "Requester", TypeNum: 1442}
-	}
-	if !handled_Responder && err == nil {
-		err = enc.ErrSkipRequired{Name: "Responder", TypeNum: 1444}
-	}
-	if !handled_SentAt && err == nil {
-		err = enc.ErrSkipRequired{Name: "SentAt", TypeNum: 1446}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	return value, nil
-}
-
-func (value *RefreshRequest) Encode() enc.Wire {
-	encoder := RefreshRequestEncoder{}
-	encoder.Init(value)
-	return encoder.Encode(value)
-}
-
-func (value *RefreshRequest) Bytes() []byte {
-	return value.Encode().Join()
-}
-
-func ParseRefreshRequest(reader enc.WireView, ignoreCritical bool) (*RefreshRequest, error) {
-	context := RefreshRequestParsingContext{}
+func ParseRefreshPong(reader enc.WireView, ignoreCritical bool) (*RefreshPong, error) {
+	context := RefreshPongParsingContext{}
 	context.Init()
 	return context.Parse(reader, ignoreCritical)
 }

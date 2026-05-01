@@ -34,5 +34,8 @@ coverage
 /ndn/**/*.wasm
 /ndn/**/wasm_exec.js
 
+# Rust build artifacts
+/openmls-lite/target/
+
 # Node.js
 /headless/

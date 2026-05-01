@@ -319,11 +319,17 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	a.dsk = nil
 	a.aes = nil
 
+	// Watch for republish requests interests to republish Yjs Deltas
+	var refreshReqPrefix enc.Name
+
 	// After bootstrapping
 	var workspaceJs map[string]any
 	workspaceJs = map[string]any{
 		// name: string;
-		"name": js.ValueOf(nodeName.String()), // wrong
+		// Expose the real identity name to JS. The boot/SVS node label may be
+		// "32=owner", which is not a signer identity and must not be used for
+		// trust-schema-bound request naming such as SOS refresh requests.
+		"name": js.ValueOf(idName.String()),
 
 		// group: string;
 		"group": js.ValueOf(wkspName.String()),
@@ -364,6 +370,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// stop(): Promise<void>;
 		"stop": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			if len(refreshReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(refreshReqPrefix)
+				client.WithdrawPrefix(refreshReqPrefix, nil)
+			}
+
 			if err := client.Stop(); err != nil {
 				return nil, err
 			}
@@ -420,6 +431,152 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				"data": jsutil.SliceToJsArray(state.Content().Join()),
 				"name": js.ValueOf(state.Name().String()),
 			}), nil
+		}),
+
+		// set_on_refresh_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+		"set_on_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			responderName, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			cb := p[1]
+			if cb.Type() != js.TypeFunction {
+				return nil, fmt.Errorf("refresh request callback must be a function")
+			}
+
+			if len(refreshReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(refreshReqPrefix)
+				client.WithdrawPrefix(refreshReqPrefix, nil)
+			}
+
+			nextRefreshReqPrefix := wkspName.
+				Append(enc.NewGenericComponent("root")).
+				Append(enc.NewKeywordComponent("REFRESH_REQ")).
+				Append(responderName...)
+
+			refreshReqPrefix = nextRefreshReqPrefix
+
+			if err := a.engine.AttachHandler(refreshReqPrefix, func(args ndn.InterestHandlerArgs) {
+				name := args.Interest.Name()
+
+				if len(name) < len(refreshReqPrefix)+2 {
+					log.Warn(nil, "Invalid refresh request name", "name", name)
+					return
+				}
+
+				requestId := name[len(refreshReqPrefix)].String()
+				requester := name[len(refreshReqPrefix)+1:].String()
+
+				go func() {
+					replyStatus := func(status string) {
+						signer := client.SuggestSigner(name)
+						if signer == nil {
+							log.Warn(nil, "No signer for refresh response", "name", name, "status", status)
+							return
+						}
+
+						data, err := spec.Spec{}.MakeData(
+							name,
+							&ndn.DataConfig{
+								Freshness: optional.Some(time.Second),
+							},
+							enc.Wire{[]byte(status)},
+							signer,
+						)
+						if err != nil {
+							log.Warn(nil, "Failed to make refresh response", "err", err, "status", status)
+							return
+						}
+
+						if err := args.Reply(data.Wire); err != nil {
+							log.Warn(nil, "Failed to reply to refresh request", "err", err, "status", status)
+						}
+					}
+
+					_, err := jsutil.Await(cb.Invoke(
+						js.ValueOf(requestId),
+						js.ValueOf(requester),
+					))
+					if err != nil {
+						log.Warn(nil, "Refresh request callback failed", "err", err)
+						replyStatus("fail")
+						return
+					}
+
+					replyStatus("ok")
+				}()
+			}); err != nil {
+				return nil, err
+			}
+
+			client.AnnouncePrefix(ndn.Announcement{
+				Name:    refreshReqPrefix,
+				Expose:  true,
+				OnError: nil,
+			})
+
+			return nil, nil
+		}),
+
+		// send_refresh_req(name: string): Promise<"ok" | "fail">;
+		"send_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			name, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+
+			type refreshResult struct {
+				status string
+				err    error
+			}
+			ch := make(chan refreshResult, 1)
+			client.ExpressR(ndn.ExpressRArgs{
+				Name: name,
+				Config: &ndn.InterestConfig{
+					MustBeFresh: true,
+					Lifetime:    optional.Some(5 * time.Second),
+				},
+				Retries: 2,
+				Callback: func(args ndn.ExpressCallbackArgs) {
+					if args.Result == ndn.InterestResultError {
+						ch <- refreshResult{err: fmt.Errorf("refresh request failed: %w", args.Error)}
+						return
+					}
+					if args.Result != ndn.InterestResultData {
+						ch <- refreshResult{err: fmt.Errorf("refresh request failed with result: %s", args.Result)}
+						return
+					}
+
+					client.ValidateExt(ndn.ValidateExtArgs{
+						Data:       args.Data,
+						SigCovered: args.SigCovered,
+						Callback: func(valid bool, err error) {
+							if !valid {
+								if err != nil {
+									ch <- refreshResult{err: fmt.Errorf("invalid refresh response: %w", err)}
+								} else {
+									ch <- refreshResult{err: fmt.Errorf("invalid refresh response")}
+								}
+								return
+							}
+
+							status := string(args.Data.Content().Join())
+							if status != "ok" && status != "fail" {
+								ch <- refreshResult{err: fmt.Errorf("invalid refresh response status: %q", status)}
+								return
+							}
+
+							ch <- refreshResult{status: status}
+						},
+					})
+				},
+			})
+
+			result := <-ch
+			if result.err != nil {
+				return nil, result.err
+			}
+			return js.ValueOf(result.status), nil
 		}),
 
 		// svs_alo(group: string, state: Uint8Array | undefined, persist_state: (state: Uint8Array) => Promise<void>): Promise<SvsAloApi>;
@@ -808,7 +965,7 @@ func (a *App) SvsAloJs(
 				RefreshPing: &tlv.RefreshPing{
 					RequestId: requestId,
 					Requester: requester,
-					SentAt:   sentAt,
+					SentAt:    sentAt,
 				},
 			}
 
@@ -817,31 +974,29 @@ func (a *App) SvsAloJs(
 				return nil, err
 			}
 
-			// Persist state
 			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-			
 			return js.ValueOf(name.String()), nil
 		}),
 
-		// pub_refresh_ack(requestId: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;	
-		"pub_refresh_ack": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+		// pub_refresh_pong(requestId: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
+		"pub_refresh_pong": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			requestId := p[0].String()
 			requester := p[1].String()
 			responder := p[2].String()
-			Freshness := uint64(p[3].Int())
-			SentAt := p[4].String()
-			
+			freshness := uint64(p[3].Int())
+			sentAt := p[4].String()
+
 			if requestId == "" || requester == "" || responder == "" {
 				return nil, fmt.Errorf("invalid request parameters")
 			}
 
 			pub := &tlv.Message{
-				RefreshAck: &tlv.RefreshAck{
+				RefreshPong: &tlv.RefreshPong{
 					RequestId: requestId,
 					Requester: requester,
 					Responder: responder,
-					Freshness: Freshness,
-					SentAt:    SentAt,
+					Freshness: freshness,
+					SentAt:    sentAt,
 				},
 			}
 
@@ -850,40 +1005,7 @@ func (a *App) SvsAloJs(
 				return nil, err
 			}
 
-			// Persist state
 			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-			
-			return js.ValueOf(name.String()), nil
-		}),
-
-		// pub_refresh_req(requestId: string, requester: string, responder: string, sentAt: string): Promise<string>;	
-		"pub_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			requestId := p[0].String()
-			requester := p[1].String()
-			responder := p[2].String()
-			SentAt := p[3].String()
-			
-			if requestId == "" || requester == "" || responder == "" {
-				return nil, fmt.Errorf("invalid request parameters")
-			}
-
-			pub := &tlv.Message{
-				RefreshRequest: &tlv.RefreshRequest{
-					RequestId: requestId,
-					Requester: requester,
-					Responder: responder,
-					SentAt:    SentAt,
-				},
-			}
-
-			name, state, err := alo.Publish(pub.Encode())
-			if err != nil {
-				return nil, err
-			}
-
-			// Persist state
-			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-			
 			return js.ValueOf(name.String()), nil
 		}),
 
@@ -966,16 +1088,14 @@ func (a *App) SvsAloJs(
 		// subscribe({
 		//   on_yjs_delta,
 		//   on_refresh_ping,
-		//   on_refresh_ack,
-		//   on_refresh_req,
+		//   on_refresh_pong,
 		// }): Promise<void>;
 		"subscribe": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			// Send a list of publications to the JS callback
 			sendPub := func(pubs []ndn_sync.SvsPub) {
 				yjsDeltas := js.Global().Get("Array").New()
 				refreshPings := js.Global().Get("Array").New()
-				refreshAcks := js.Global().Get("Array").New()
-				refreshReqs := js.Global().Get("Array").New()
+				refreshPongs := js.Global().Get("Array").New()
 
 				for _, pub := range pubs {
 					pmsg, err := tlv.ParseMessage(enc.NewWireView(pub.Content), true)
@@ -1051,24 +1171,13 @@ func (a *App) SvsAloJs(
 							"seq_num":    pub.SeqNum,
 						}))
 
-					case pmsg.RefreshAck != nil:
-						refreshAcks.Call("push", js.ValueOf(map[string]any{
-							"request_id": pmsg.RefreshAck.RequestId,
-							"requester":  pmsg.RefreshAck.Requester,
-							"responder":  pmsg.RefreshAck.Responder,
-							"freshness":  pmsg.RefreshAck.Freshness,
-							"sent_at":    pmsg.RefreshAck.SentAt,
-							"publisher":  pub.Publisher.String(),
-							"boot_time":  pub.BootTime,
-							"seq_num":    pub.SeqNum,
-						}))
-
-					case pmsg.RefreshRequest != nil:
-						refreshReqs.Call("push", js.ValueOf(map[string]any{
-							"request_id": pmsg.RefreshRequest.RequestId,
-							"requester":  pmsg.RefreshRequest.Requester,
-							"responder":  pmsg.RefreshRequest.Responder,
-							"sent_at":    pmsg.RefreshRequest.SentAt,
+					case pmsg.RefreshPong != nil:
+						refreshPongs.Call("push", js.ValueOf(map[string]any{
+							"request_id": pmsg.RefreshPong.RequestId,
+							"requester":  pmsg.RefreshPong.Requester,
+							"responder":  pmsg.RefreshPong.Responder,
+							"freshness":  pmsg.RefreshPong.Freshness,
+							"sent_at":    pmsg.RefreshPong.SentAt,
 							"publisher":  pub.Publisher.String(),
 							"boot_time":  pub.BootTime,
 							"seq_num":    pub.SeqNum,
@@ -1080,7 +1189,7 @@ func (a *App) SvsAloJs(
 						// log.Warn(a, "Ignoring unknown message", "publisher", pub.Publisher)
 					}
 				}
-				
+
 				invokeBatch := func(name string, arr js.Value) {
 					if arr.Get("length").Int() == 0 {
 						return
@@ -1094,9 +1203,7 @@ func (a *App) SvsAloJs(
 
 				invokeBatch("on_yjs_delta", yjsDeltas)
 				invokeBatch("on_refresh_ping", refreshPings)
-				invokeBatch("on_refresh_ack", refreshAcks)
-				invokeBatch("on_refresh_req", refreshReqs)
-
+				invokeBatch("on_refresh_pong", refreshPongs)
 			}
 
 			// Subscribe to the SVS instance
