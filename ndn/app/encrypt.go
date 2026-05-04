@@ -4,6 +4,7 @@ package app
 
 import (
 	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/binary"
@@ -18,6 +19,46 @@ import (
 	"github.com/named-data/ndnd/std/types/optional"
 	"github.com/pulsejet/ownly/ndn/app/tlv"
 )
+
+const (
+	maxSessionKeys  = 5
+	LegacySessionID = "legacy"
+)
+
+func (a *App) installEncryptKey(sessionID string, key []byte) error {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+
+	a.aes = block
+	a.sessionId = sessionID
+
+	ring := []SessionCipher{{SessionId: sessionID, AES: block}}
+	for _, e := range a.keyRing {
+		if e.SessionId == sessionID {
+			continue
+		}
+		ring = append(ring, e)
+		if len(ring) == maxSessionKeys {
+			break
+		}
+	}
+	a.keyRing = ring
+	return nil
+}
+
+func (a *App) cipherForSession(sessionID string) cipher.Block {
+	if a.sessionId == sessionID && a.aes != nil {
+		return a.aes
+	}
+	for _, e := range a.keyRing {
+		if e.SessionId == sessionID {
+			return e.AES
+		}
+	}
+	return nil
+}
 
 func (a *App) processDskRequest(client ndn.Client, group enc.Name, pub []byte) enc.Wire {
 	if len(a.dsk) != 32 || len(pub) > 64 {
@@ -153,6 +194,7 @@ func (a *App) encryptPub(pub *tlv.Message, seq uint64) (*tlv.Message, error) {
 
 	return &tlv.Message{
 		AeadBlock: &tlv.AeadBlock{
+			SessionID: a.sessionId,
 			IV:         iv,
 			Ciphertext: ciphertext,
 		},
@@ -163,13 +205,15 @@ func (a *App) decryptPub(pub *tlv.Message) (*tlv.Message, error) {
 	if pub.AeadBlock == nil {
 		return pub, nil
 	}
-	if a.aes == nil {
-		return nil, fmt.Errorf("AES key not set")
+
+	aes := a.cipherForSession(pub.AeadBlock.SessionID)
+	if aes == nil {
+		return nil, fmt.Errorf("no cipher for session ID %s", pub.AeadBlock.SessionID)
 	}
 
 	iv := pub.AeadBlock.IV
 	ct := pub.AeadBlock.Ciphertext
-	plaintext, err := aeadOpen(a.aes, iv, ct)
+	plaintext, err := aeadOpen(aes, iv, ct)
 	if err != nil {
 		return nil, err
 	}

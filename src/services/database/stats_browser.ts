@@ -23,7 +23,9 @@ export class IDBStatsDb implements StatsDb {
   }
 
   public async put(name: string, stats: IWkspStats): Promise<void> {
-    await this.db.workspaces.put(stats, name);
+    // Vue props/state can be proxies, which IndexedDB cannot structured-clone.
+    const plainStats = JSON.parse(JSON.stringify(stats)) as IWkspStats;
+    await this.db.workspaces.put(plainStats, name);
   }
 
   public async del(name: string): Promise<void> {

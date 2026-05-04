@@ -18,6 +18,11 @@ import (
 	jsutil "github.com/named-data/ndnd/std/utils/js"
 )
 
+type SessionCipher struct {
+	SessionId string
+	AES       cipher.Block
+}
+
 type App struct {
 	face     ndn.Face
 	engine   ndn.Engine
@@ -37,6 +42,11 @@ type App struct {
 
 	// Pending DSK requests -> cancel function
 	dskReqs map[string]*time.Timer
+
+	// Session ID
+	sessionId string
+	// 5 session ciphers for decryption
+	keyRing []SessionCipher
 
 	// Tracks boot sync groups we have already joined to avoid duplicates
 	bootSyncs map[string]bool

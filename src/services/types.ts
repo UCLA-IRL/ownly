@@ -1,3 +1,9 @@
+export type IMlsKey = {
+  /** MLS key associated with a session ID */
+  sessionId: string;
+  mlsKey: string;
+}
+
 export type IWkspStats = {
   /** Readable label for the space */
   label: string;
@@ -9,9 +15,14 @@ export type IWkspStats = {
   ignore: boolean;
   /** Workspace is pending initial setup */
   pendingSetup?: boolean;
+  /** Local access was revoked; require a fresh invitation to rejoin */
+  revoked?: boolean;
   /** Last access time */
   lastAccess?: number;
+  /** Stable identifier for this local device/workspace profile */
   deviceId?: string;
+  /** Whether this local device is the designated master MLS device */
+  isMasterDevice?: boolean;
 
   /** Pre-shared key */
   psk: string;
@@ -19,10 +30,17 @@ export type IWkspStats = {
   dsk: string | null;
   /** DSK request key */
   dskExch?: string;
+  /** Invitee already published MLS key package request */
+  mlsJoinRequested?: boolean;
+  mlsJoinRequestedAt?: number;
+  mlsJoinAttempts?: number;
+  mlsOwnerBootstrapped?: boolean;
+  mlsKeys?: IMlsKey[];
 };
 
 export type IOwnerDeviceRecord = {
   deviceId: string;
+  ownerId: string;
   label: string;
   registeredAt: number;
 };

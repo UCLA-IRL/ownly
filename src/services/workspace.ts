@@ -7,11 +7,12 @@ import ndn from '@/services/ndn';
 import { SvsProvider } from '@/services/svs-provider';
 import { encodeMlsIdentity } from '@/services/mls-identity';
 
+
 import { GlobalBus } from '@/services/event-bus';
 import * as utils from '@/utils/index';
 import { Toast } from '@/utils/toast';
 
-import type { SvsAloApi, WorkspaceAPI, RefreshPongPub, RefreshPingPub } from '@/services/ndn';
+import type { SvsAloApi, WorkspaceAPI, RefreshPongPub,RefreshPingPub } from '@/services/ndn';
 import type { Router } from 'vue-router';
 import type { IWkspStats } from '@/services/types';
 
@@ -38,6 +39,8 @@ export class Workspace {
   }>();
   private readonly seenRefreshPings = new Map<string, number>();
 
+
+
   private constructor(
     public readonly metadata: IWkspStats,
     private readonly api: WorkspaceAPI,
@@ -55,6 +58,7 @@ export class Workspace {
     return encodeMlsIdentity(this.api.name, this.metadata.deviceId);
   }
 
+
   /**
    * Start the workspace.
    * This will connect to the testbed and start the SVS instance.
@@ -64,6 +68,8 @@ export class Workspace {
     await ndn.api.connect_testbed();
 
     await Workspace.ensureDeviceMetadata(metadata);
+
+
 
     // Set up workspace API and client
     let api: WorkspaceAPI | null = null;
@@ -83,11 +89,19 @@ export class Workspace {
       }
 
       // Check if we have the encryption keys
-      if (!metadata.psk) throw new Error('Missing PSK');
-      if (!metadata.dsk) await Workspace.findDskRoutine(metadata, api);
-
-      // Set encryption keys
+      if (!metadata.psk) {
+        throw new Error('Missing PSK, cannot start workspace');
+      }
+      if (!metadata.dsk) {
+        await Workspace.findDskRoutine(metadata, api);
+      }
       await api.set_encrypt_keys(utils.fromHex(metadata.psk), utils.fromHex(metadata.dsk!));
+
+      if (metadata.mlsKeys?.length) {
+        for (const entry of [...metadata.mlsKeys].reverse()) {
+          await api.set_encrypt_key(entry.sessionId, utils.fromHex(entry.mlsKey));
+        }
+      }
 
       // Create general SVS group
       const provider = await SvsProvider.create(api, 'root');
@@ -97,13 +111,46 @@ export class Workspace {
       const proj = await WorkspaceProjManager.create(api, provider);
       const invite = await WorkspaceInviteManager.create(api, metadata, provider);
 
+      const shouldRequestMls =
+        !(metadata.owner && metadata.isMasterDevice) &&
+        !(metadata.mlsKeys?.length) &&
+        (
+          !metadata.mlsJoinRequested ||
+          !metadata.mlsJoinRequestedAt ||
+          Date.now() - metadata.mlsJoinRequestedAt > 5 * 60 * 1000 // retry after 5 min
+        );
+
+      if (shouldRequestMls) {
+        try {
+          await invite.requestMlsJoin();
+        } catch (e) {
+          // keep workspace usable; retry next startup
+          console.warn('Failed to publish MLS key package ref', e);
+          metadata.mlsJoinRequested = false;
+          await _o.stats.put(metadata.name, metadata);
+        }
+      }
+
+
       // Create workspace object first (without agent)
       const workspace = new Workspace(metadata, api, provider, chat, proj, invite, null);
+      invite.setOnOwnerSessionAdvanced(async () => {
+        await workspace.republishEncryptedState();
+      });
       workspace.registerRefreshHandlers();
       await api.set_on_refresh_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
         console.log('received directed refresh request', { requestId, requester });
         await workspace.republishEncryptedState();
       });
+      if (metadata.owner) {
+        await api.set_on_mls_rst_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
+          console.log('received directed MLS reset request', { requestId, requester });
+          if (!invite.isMasterDevice()) {
+            throw new Error('Only the master owner device can reset MLS state');
+          }
+          await invite.resetGroupMlsState();
+        });
+      }
 
       // Then create agent with workspace reference
       const agent = await WorkspaceAgentManager.create(api, provider, workspace);
@@ -132,6 +179,7 @@ export class Workspace {
     this.refreshUnsubs.length = 0;
     this.pendingRefreshPongs.clear();
     this.seenRefreshPings.clear();
+
     await this.provider?.destroy();
     if (this.agent) {
       await this.agent.destroy();
@@ -220,7 +268,7 @@ export class Workspace {
     let sawResponder = false;
 
     try {
-    while (Date.now() < deadline) {
+      while (Date.now() < deadline) {
         const responders = this.getRefreshResponders(requestId)
           .filter((pub) => !attemptedResponders.has(pub.responder));
 
@@ -233,18 +281,18 @@ export class Workspace {
         for (const responder of responders) {
           attemptedResponders.add(responder.responder);
           console.log('trying SOS responder', {
-          request_id: requestId,
+            request_id: requestId,
             requester: this.currentDeviceIdentity(),
             responder: responder.responder,
-        });
+          });
 
           try {
             const status = await this.requestRefresh(requestId, responder.responder);
             if (status === 'ok') {
-        return {
-          requestId,
+              return {
+                requestId,
                 responder: responder.responder,
-        };
+              };
             }
 
             console.warn('SOS responder reported refresh failure', {
@@ -260,17 +308,17 @@ export class Workspace {
               err: e,
             });
           }
-      }
+        }
 
-      await this.sleep(pollMs);
+        await this.sleep(pollMs);
       }
     } finally {
       this.pendingRefreshPongs.delete(requestId);
     }
 
     if (!sawResponder) {
-    throw new Error('No online responder acknowledged the SOS request');
-  }
+      throw new Error('No online responder acknowledged the SOS request');
+    }
 
     throw new Error('All online responders failed to republish the SOS request');
   }
@@ -288,6 +336,33 @@ export class Workspace {
 
   public async requestRefresh(requestId: string, responder: string): Promise<'ok' | 'fail'> {
     return await this.api.send_refresh_req(this.refreshReqName(responder, requestId));
+  }
+
+  private mlsResetReqName(responder: string, requestId: string): string {
+    return `${utils.normalizePath(this.api.group)}/root/32=MLS_RST_REQ${utils.normalizePath(responder)}/${requestId}${utils.normalizePath(this.currentDeviceIdentity())}`;
+  }
+
+  public async requestMlsReset(): Promise<void> {
+    if (this.metadata.owner && this.invite.isMasterDevice()) {
+      await this.invite.resetGroupMlsState();
+      return;
+    }
+
+    const masterOwnerDevice = this.invite.getMasterOwnerDevice();
+    if (!masterOwnerDevice) {
+      throw new Error('No master owner device is registered');
+    }
+    if (!masterOwnerDevice.ownerId) {
+      throw new Error('Master owner device is missing owner identity metadata');
+    }
+
+    const responder = encodeMlsIdentity(masterOwnerDevice.ownerId, masterOwnerDevice.deviceId);
+    const status = await this.api.send_mls_rst_req(
+      this.mlsResetReqName(responder, crypto.randomUUID()),
+    );
+    if (status !== 'ok') {
+      throw new Error('Master owner device rejected the MLS reset request');
+    }
   }
 
   private pruneRefreshState(now = Date.now()): void {
@@ -376,6 +451,9 @@ export class Workspace {
     if (!metadata) {
       throw new Error(`Workspace not found, have you joined it? <br/> [${space}]`);
     }
+    if (metadata.revoked) {
+      throw new Error('Workspace access was revoked. Rejoin with a fresh invitation.');
+    }
 
     // Store last access time
     metadata.lastAccess = Date.now();
@@ -450,7 +528,7 @@ export class Workspace {
     payload: Uint8Array | null,
   ): Promise<string> {
     const metadata = await _o.stats.get(wksp);
-    if (metadata) throw new Error('You have already joined this workspace');
+    if (metadata && !metadata.revoked) throw new Error('You have already joined this workspace');
 
     // Generate or validate PSK
     if (create) {
@@ -477,7 +555,9 @@ export class Workspace {
       owner: isOwner,
       ignore: ignore,
       pendingSetup: create ? true : undefined,
+      revoked: undefined,
       deviceId: globalThis.crypto.randomUUID(),
+      isMasterDevice: create && isOwner,
       psk: utils.toHex(psk),
       dsk: dsk ? utils.toHex(dsk) : null,
     });
@@ -533,6 +613,11 @@ export class Workspace {
 
     if (!metadata.deviceId) {
       metadata.deviceId = globalThis.crypto.randomUUID();
+      changed = true;
+    }
+
+    if (metadata.isMasterDevice === undefined) {
+      metadata.isMasterDevice = false;
       changed = true;
     }
 

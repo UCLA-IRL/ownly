@@ -106,6 +106,7 @@ export interface WorkspaceAPI {
 
   /** Set the encryption keys */
   set_encrypt_keys(psk: Uint8Array, dsk: Uint8Array): Promise<void>;
+  set_encrypt_key(sessionId: string, key: Uint8Array): Promise<void>;
 
   /** Start the workspace */
   start(): Promise<void>;
@@ -120,6 +121,10 @@ export interface WorkspaceAPI {
   set_on_refresh_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
   /** Send a directed SOS refresh request Interest */
   send_refresh_req(name: string): Promise<'ok' | 'fail'>;
+  /** Register an MLS reset request handler for the owner/master device */
+  set_on_mls_rst_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+  /** Send a directed MLS reset request Interest */
+  send_mls_rst_req(name: string): Promise<'ok' | 'fail'>;
 
   /** SVS ALO instance */
   svs_alo(
@@ -134,6 +139,15 @@ export interface WorkspaceAPI {
   /** Wait for DSK to appear for the given key */
   wait_for_dsk(key: Uint8Array): Promise<Uint8Array>;
 }
+
+export type MlsRefPub = {
+  invitee: string;
+  blob_name: string;
+  session_id: string;
+  publisher: string;
+  boot_time: number;
+  seq_num: number;
+};
 
 /** API of the SVS ALO instance */
 export interface SvsAloApi {
@@ -164,9 +178,19 @@ export interface SvsAloApi {
   /** Publish ack for the DSK response */
   pub_dsk_ack(key: Uint8Array): Promise<void>;
 
+  /** Publish MLS key package for a new member */
+  pub_mls_kp_ref(invitee: string, blobName: string, sessionId: string): Promise<string>;
+  /** Publish MLS welcome message for a new member */
+  pub_mls_welcome_ref(invitee: string, blobName: string, sessionId: string): Promise<string>;
+  /** Publish MLS commit message for a group change */
+  pub_mls_commit_ref(invitee: string, blobName: string, sessionId: string): Promise<string>;
+
   /** Set SVS ALO subscription callbacks */
   subscribe(params: {
-    on_yjs_delta?: SvsAloSub<{ uuid: string; binary: Uint8Array }>;
+    on_yjs_delta: SvsAloSub<{ uuid: string; binary: Uint8Array }>;
+    on_mls_kp_ref?: SvsAloSub<MlsRefPub>;
+    on_mls_welcome_ref?: SvsAloSub<MlsRefPub>;
+    on_mls_commit_ref?: SvsAloSub<MlsRefPub>;
     on_refresh_ping?: SvsAloSub<RefreshPingPub>;
     on_refresh_pong?: SvsAloSub<RefreshPongPub>;
   }): Promise<void>;
