@@ -280,8 +280,9 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		log.Info(nil, "Watching for access requests")
 	}
 
-	// Watch for republish requests interests to republish Yjs Deltas
+	// Watch for directed request interests used by SOS and MLS reset.
 	var refreshReqPrefix enc.Name
+	var mlsRstReqPrefix enc.Name
 
 	var workspaceJs map[string]any
 	workspaceJs = map[string]any{
@@ -344,6 +345,10 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if len(refreshReqPrefix) > 0 {
 				_ = a.engine.DetachHandler(refreshReqPrefix)
 				client.WithdrawPrefix(refreshReqPrefix, nil)
+			}
+			if len(mlsRstReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(mlsRstReqPrefix)
+				client.WithdrawPrefix(mlsRstReqPrefix, nil)
 			}
 
 			if err := client.Stop(); err != nil {
@@ -480,6 +485,91 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			return nil, nil
 		}),
 
+		// set_on_mls_rst_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+		"set_on_mls_rst_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			responderName, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			cb := p[1]
+			if cb.Type() != js.TypeFunction {
+				return nil, fmt.Errorf("MLS reset request callback must be a function")
+			}
+
+			if len(mlsRstReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(mlsRstReqPrefix)
+				client.WithdrawPrefix(mlsRstReqPrefix, nil)
+			}
+
+			nextMlsRstReqPrefix := group.
+				Append(enc.NewGenericComponent("root")).
+				Append(enc.NewKeywordComponent("MLS_RST_REQ")).
+				Append(responderName...)
+
+			mlsRstReqPrefix = nextMlsRstReqPrefix
+
+			if err := a.engine.AttachHandler(mlsRstReqPrefix, func(args ndn.InterestHandlerArgs) {
+				name := args.Interest.Name()
+
+				if len(name) < len(mlsRstReqPrefix)+2 {
+					log.Warn(nil, "Invalid MLS reset request name", "name", name)
+					return
+				}
+
+				requestId := name[len(mlsRstReqPrefix)].String()
+				requester := name[len(mlsRstReqPrefix)+1:].String()
+
+				go func() {
+					replyStatus := func(status string) {
+						signer := client.SuggestSigner(name)
+						if signer == nil {
+							log.Warn(nil, "No signer for MLS reset response", "name", name, "status", status)
+							return
+						}
+
+						data, err := spec.Spec{}.MakeData(
+							name,
+							&ndn.DataConfig{
+								Freshness: optional.Some(time.Second),
+							},
+							enc.Wire{[]byte(status)},
+							signer,
+						)
+						if err != nil {
+							log.Warn(nil, "Failed to make MLS reset response", "err", err, "status", status)
+							return
+						}
+
+						if err := args.Reply(data.Wire); err != nil {
+							log.Warn(nil, "Failed to reply to MLS reset request", "err", err, "status", status)
+						}
+					}
+
+					_, err := jsutil.Await(cb.Invoke(
+						js.ValueOf(requestId),
+						js.ValueOf(requester),
+					))
+					if err != nil {
+						log.Warn(nil, "MLS reset request callback failed", "err", err)
+						replyStatus("fail")
+						return
+					}
+
+					replyStatus("ok")
+				}()
+			}); err != nil {
+				return nil, err
+			}
+
+			client.AnnouncePrefix(ndn.Announcement{
+				Name:    mlsRstReqPrefix,
+				Expose:  true,
+				OnError: nil,
+			})
+
+			return nil, nil
+		}),
+
 		// send_refresh_req(name: string): Promise<"ok" | "fail">;
 		"send_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			name, err := enc.NameFromStr(p[0].String())
@@ -529,6 +619,67 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 							}
 
 							ch <- refreshResult{status: status}
+						},
+					})
+				},
+			})
+
+			result := <-ch
+			if result.err != nil {
+				return nil, result.err
+			}
+			return js.ValueOf(result.status), nil
+		}),
+
+		// send_mls_rst_req(name: string): Promise<"ok" | "fail">;
+		"send_mls_rst_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			name, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+
+			type mlsResetResult struct {
+				status string
+				err    error
+			}
+			ch := make(chan mlsResetResult, 1)
+			client.ExpressR(ndn.ExpressRArgs{
+				Name: name,
+				Config: &ndn.InterestConfig{
+					MustBeFresh: true,
+					Lifetime:    optional.Some(5 * time.Second),
+				},
+				Retries: 2,
+				Callback: func(args ndn.ExpressCallbackArgs) {
+					if args.Result == ndn.InterestResultError {
+						ch <- mlsResetResult{err: fmt.Errorf("MLS reset request failed: %w", args.Error)}
+						return
+					}
+					if args.Result != ndn.InterestResultData {
+						ch <- mlsResetResult{err: fmt.Errorf("MLS reset request failed with result: %s", args.Result)}
+						return
+					}
+
+					client.ValidateExt(ndn.ValidateExtArgs{
+						Data:       args.Data,
+						SigCovered: args.SigCovered,
+						Callback: func(valid bool, err error) {
+							if !valid {
+								if err != nil {
+									ch <- mlsResetResult{err: fmt.Errorf("invalid MLS reset response: %w", err)}
+								} else {
+									ch <- mlsResetResult{err: fmt.Errorf("invalid MLS reset response")}
+								}
+								return
+							}
+
+							status := string(args.Data.Content().Join())
+							if status != "ok" && status != "fail" {
+								ch <- mlsResetResult{err: fmt.Errorf("invalid MLS reset response status: %q", status)}
+								return
+							}
+
+							ch <- mlsResetResult{status: status}
 						},
 					})
 				},

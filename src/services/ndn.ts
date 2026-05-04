@@ -73,6 +73,10 @@ export interface WorkspaceAPI {
   set_on_refresh_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
   /** Send a directed SOS refresh request Interest */
   send_refresh_req(name: string): Promise<'ok' | 'fail'>;
+  /** Register an MLS reset request handler for the owner/master device */
+  set_on_mls_rst_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+  /** Send a directed MLS reset request Interest */
+  send_mls_rst_req(name: string): Promise<'ok' | 'fail'>;
 
   /** SVS ALO instance */
   svs_alo(

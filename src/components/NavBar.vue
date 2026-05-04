@@ -627,18 +627,11 @@ async function resetMlsState() {
     Toast.error('No active workspace');
     return;
   }
-  if (!canCurrentWorkspaceManageMls()) {
-    Toast.error('Only the master owner device can reset MLS state');
-    return;
-  }
-  if (!globalThis.confirm('Reset the MLS state machine for the entire workspace? This will force all members to re-establish MLS state.')) {
-    return;
-  }
 
   isResettingMls.value = true;
-  const progress = Toast.loading('Resetting MLS state for the workspace...');
+  const progress = Toast.loading('Requesting MLS state reset...');
   try {
-    await wksp.invite.resetGroupMlsState();
+    await wksp.requestMlsReset();
     await progress.success('MLS state reset triggered');
   } catch (err) {
     await progress.error(`Failed to reset MLS state: ${err}`);

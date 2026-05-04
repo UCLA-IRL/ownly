@@ -109,6 +109,7 @@ export class WorkspaceInviteManager {
     const existing = this.ownerDevices.get(this.wsmeta.deviceId);
     return {
       deviceId: this.wsmeta.deviceId,
+      ownerId: this.api.name,
       label: existing?.label?.trim() || this.defaultOwnerDeviceLabel(this.wsmeta.deviceId),
       registeredAt: existing?.registeredAt ?? now,
     };

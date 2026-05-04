@@ -124,6 +124,15 @@ export class Workspace {
         console.log('received directed refresh request', { requestId, requester });
         await workspace.republishEncryptedState();
       });
+      if (metadata.owner) {
+        await api.set_on_mls_rst_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
+          console.log('received directed MLS reset request', { requestId, requester });
+          if (!invite.isMasterDevice()) {
+            throw new Error('Only the master owner device can reset MLS state');
+          }
+          await invite.resetGroupMlsState();
+        });
+      }
 
       // Then create agent with workspace reference
       const agent = await WorkspaceAgentManager.create(api, provider, workspace);
@@ -308,6 +317,33 @@ export class Workspace {
 
   public async requestRefresh(requestId: string, responder: string): Promise<'ok' | 'fail'> {
     return await this.api.send_refresh_req(this.refreshReqName(responder, requestId));
+  }
+
+  private mlsResetReqName(responder: string, requestId: string): string {
+    return `${utils.normalizePath(this.api.group)}/root/32=MLS_RST_REQ${utils.normalizePath(responder)}/${requestId}${utils.normalizePath(this.currentDeviceIdentity())}`;
+  }
+
+  public async requestMlsReset(): Promise<void> {
+    if (this.metadata.owner && this.invite.isMasterDevice()) {
+      await this.invite.resetGroupMlsState();
+      return;
+    }
+
+    const masterOwnerDevice = this.invite.getMasterOwnerDevice();
+    if (!masterOwnerDevice) {
+      throw new Error('No master owner device is registered');
+    }
+    if (!masterOwnerDevice.ownerId) {
+      throw new Error('Master owner device is missing owner identity metadata');
+    }
+
+    const responder = encodeMlsIdentity(masterOwnerDevice.ownerId, masterOwnerDevice.deviceId);
+    const status = await this.api.send_mls_rst_req(
+      this.mlsResetReqName(responder, crypto.randomUUID()),
+    );
+    if (status !== 'ok') {
+      throw new Error('Master owner device rejected the MLS reset request');
+    }
   }
 
   private pruneRefreshState(now = Date.now()): void {

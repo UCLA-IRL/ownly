@@ -40,6 +40,7 @@ export type IWkspStats = {
 
 export type IOwnerDeviceRecord = {
   deviceId: string;
+  ownerId: string;
   label: string;
   registeredAt: number;
 };
