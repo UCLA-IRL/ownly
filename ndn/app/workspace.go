@@ -353,8 +353,6 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}
 			a.ivb = identitySigner.KeyName().Hash()
 
-			a.ivb = userKey.KeyName().Hash()
-
 			return nil, nil
 		}),
 
@@ -369,7 +367,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if err := a.installEncryptKey(sessionID, key); err != nil {
 				return nil, err
 			}
-			a.ivb = userKey.KeyName().Hash()
+			a.ivb = identitySigner.KeyName().Hash()
 			a.sessionId = sessionID
 			return nil, nil
 		}),
@@ -472,7 +470,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				client.WithdrawPrefix(refreshReqPrefix, nil)
 			}
 
-			nextRefreshReqPrefix := group.
+			nextRefreshReqPrefix := wkspName.
 				Append(enc.NewGenericComponent("root")).
 				Append(enc.NewKeywordComponent("REFRESH_REQ")).
 				Append(responderName...)
@@ -557,7 +555,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				client.WithdrawPrefix(mlsRstReqPrefix, nil)
 			}
 
-			nextMlsRstReqPrefix := group.
+			nextMlsRstReqPrefix := wkspName.
 				Append(enc.NewGenericComponent("root")).
 				Append(enc.NewKeywordComponent("MLS_RST_REQ")).
 				Append(responderName...)
@@ -1252,64 +1250,6 @@ func (a *App) SvsAloJs(
 			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
 
 			return nil, nil
-		}),
-
-		// pub_refresh_ping(requestId: string, requester: string, sentAt: string): Promise<string>;
-		"pub_refresh_ping": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			requestId := p[0].String()
-			requester := p[1].String()
-			sentAt := p[2].String()
-
-			if requestId == "" || requester == "" {
-				return nil, fmt.Errorf("invalid request parameters")
-			}
-
-			pub := &tlv.Message{
-				RefreshPing: &tlv.RefreshPing{
-					RequestId: requestId,
-					Requester: requester,
-					SentAt:    sentAt,
-				},
-			}
-
-			name, state, err := alo.Publish(pub.Encode())
-			if err != nil {
-				return nil, err
-			}
-
-			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-			return js.ValueOf(name.String()), nil
-		}),
-
-		// pub_refresh_pong(requestId: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
-		"pub_refresh_pong": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			requestId := p[0].String()
-			requester := p[1].String()
-			responder := p[2].String()
-			freshness := uint64(p[3].Int())
-			sentAt := p[4].String()
-
-			if requestId == "" || requester == "" || responder == "" {
-				return nil, fmt.Errorf("invalid request parameters")
-			}
-
-			pub := &tlv.Message{
-				RefreshPong: &tlv.RefreshPong{
-					RequestId: requestId,
-					Requester: requester,
-					Responder: responder,
-					Freshness: freshness,
-					SentAt:    sentAt,
-				},
-			}
-
-			name, state, err := alo.Publish(pub.Encode())
-			if err != nil {
-				return nil, err
-			}
-
-			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-			return js.ValueOf(name.String()), nil
 		}),
 
 		// pub_mls_kp_ref(invitee: string, blobName: string): Promise<string>;

@@ -20,11 +20,11 @@ type Message struct {
 	BootJoin *BootJoin `tlv:"0xD6"`
 	// MLS messages
 	//+field:struct:MlsBlobRef
-	MlsKeyPackage *MlsBlobRef `tlv:"0xD0"`
+	MlsKeyPackage *MlsBlobRef `tlv:"0xD8"`
 	//+field:struct:MlsBlobRef
-	MlsCommit *MlsBlobRef `tlv:"0xD2"`
+	MlsCommit *MlsBlobRef `tlv:"0xDA"`
 	//+field:struct:MlsBlobRef
-	MlsWelcome *MlsBlobRef `tlv:"0xD4"`
+	MlsWelcome *MlsBlobRef `tlv:"0xDC"`
 }
 
 type AeadBlock struct {

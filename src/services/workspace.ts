@@ -12,7 +12,7 @@ import { GlobalBus } from '@/services/event-bus';
 import * as utils from '@/utils/index';
 import { Toast } from '@/utils/toast';
 
-import type { SvsAloApi, WorkspaceAPI, RefreshPongPub,RefreshPingPub } from '@/services/ndn';
+import type { SvsAloApi, WorkspaceAPI, RefreshPongPub, RefreshPingPub } from '@/services/ndn';
 import type { Router } from 'vue-router';
 import type { IWkspStats } from '@/services/types';
 
