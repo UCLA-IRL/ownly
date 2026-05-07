@@ -602,7 +602,7 @@ export class WorkspaceInviteManager {
   private async onMlsCommitRefs(pubs: MlsRefPub[]): Promise<void> {
     for (const pub of this.uniqueOrdered(pubs)) {
       if (this.isResetPub(pub)) {
-        if (this.wsmeta.owner && this.isMasterDevice() && pub.publisher === this.api.name) continue;
+        if (this.wsmeta.owner && this.isMasterDevice()) continue;
         await this.resetLocalMlsState(`remote group reset from ${pub.publisher}`);
         continue;
       }
@@ -749,6 +749,7 @@ export class WorkspaceInviteManager {
     );
     await this.provider.svs.pub_mls_commit_ref(MLS_RESET_SENTINEL, resetBlob, MLS_PREJOIN_SESSION_ID);
     await this.bootstrapOwnerMls();
+    await this.notifyOwnerSessionAdvanced(this.currentMlsSessionId());
   }
 
 
@@ -772,7 +773,6 @@ export class WorkspaceInviteManager {
         this.wsmeta.mlsOwnerBootstrapped = true;
         await _o.stats.put(this.wsmeta.name, this.wsmeta);
         this.maybeRegisterLocalOwnerDeviceRecord();
-        await this.notifyOwnerSessionAdvanced(sessionId);
       })();
     }
 
