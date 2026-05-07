@@ -167,9 +167,9 @@ func (a *App) JsApi() js.Value {
 			return a.IsWorkspaceOwner(p[0].String())
 		}),
 
-		// get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
+		// get_workspace(name: string): Promise<WorkspaceAPI>;
 		"get_workspace": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			return a.GetWorkspace(p[0].String(), p[1].Bool())
+			return a.GetWorkspace(p[0].String())
 		}),
 	}
 

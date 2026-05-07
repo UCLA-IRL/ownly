@@ -5,8 +5,6 @@ export type IWkspStats = {
   name: string;
   /** Is the current user the owner */
   owner: boolean;
-  /** Workspace ignore certificate lifetime */
-  ignore: boolean;
   /** Workspace is pending initial setup */
   pendingSetup?: boolean;
   /** Last access time */
