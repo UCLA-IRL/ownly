@@ -58,7 +58,7 @@ export class Workspace {
     // Set up workspace API and client
     let api: WorkspaceAPI | null = null;
     try {
-      api = await ndn.api.get_workspace(metadata.name);
+      api = await ndn.api.get_workspace(metadata.name, metadata.ignore);
       await api.start();
 
       // Check if we have the encryption keys
@@ -408,7 +408,7 @@ export class Workspace {
   public static async join(
     label: string,
     wksp: string,
-    create: boolean, 
+    create: boolean, ignore: boolean,
     psk: Uint8Array | null,
   ): Promise<string> {
     const metadata = await _o.stats.get(wksp);
@@ -437,6 +437,7 @@ export class Workspace {
       label: label,
       name: finalName,
       owner: isOwner,
+      ignore: ignore,
       pendingSetup: create ? true : undefined,
       psk: utils.toHex(psk),
       dsk: dsk ? utils.toHex(dsk) : null,

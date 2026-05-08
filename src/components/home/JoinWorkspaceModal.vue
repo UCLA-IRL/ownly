@@ -105,7 +105,7 @@ async function join() {
 
     // Join the workspace without attempting create
     const pskBuf = utils.fromHex(psk);
-    const finalName = await Workspace.join(label, name, false, pskBuf);
+    const finalName = await Workspace.join(label, name, false, false, pskBuf);
 
     emit('join', finalName);
     emit('close');

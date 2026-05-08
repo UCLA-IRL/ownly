@@ -206,7 +206,7 @@ func (a *App) onAccessRequest(args ndn.InterestHandlerArgs) {
 }
 
 // GetWorkspace returns a JS object representing the workspace with the given name.
-func (a *App) GetWorkspace(groupStr string) (api js.Value, err error) {
+func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, err error) {
 	group, err := enc.NameFromStr(groupStr)
 	if err != nil {
 		return
@@ -352,10 +352,10 @@ func (a *App) GetWorkspace(groupStr string) (api js.Value, err error) {
 			// Fetch the content from the network
 			ch := make(chan ndn.ConsumeState)
 			client.ConsumeExt(ndn.ConsumeExtArgs{
-				Name:             name,
-				TryStore:         true,
-				UseSignatureTime: optional.Some(true),
-				Callback:         func(state ndn.ConsumeState) { ch <- state },
+				Name:           name,
+				TryStore:       true,
+				IgnoreValidity: optional.Some(ignoreValidity),
+				Callback:       func(state ndn.ConsumeState) { ch <- state },
 			})
 			state := <-ch
 			if err := state.Error(); err != nil {
@@ -387,16 +387,16 @@ func (a *App) GetWorkspace(groupStr string) (api js.Value, err error) {
 				InitialState: stateWire,
 
 				Svs: ndn_sync.SvSyncOpts{
-					Client:           client,
-					GroupPrefix:      svsAloGroup,
-					UseSignatureTime: optional.Some(true),
+					Client:         client,
+					GroupPrefix:    svsAloGroup,
+					IgnoreValidity: optional.Some(ignoreValidity),
 				},
 
 				Snapshot: &ndn_sync.SnapshotNodeHistory{
-					Client:           client,
-					Threshold:        SnapshotThreshold,
-					Compress:         a.CompressSnapshotYjs,
-					UseSignatureTime: optional.Some(true),
+					Client:         client,
+					Threshold:      SnapshotThreshold,
+					Compress:       a.CompressSnapshotYjs,
+					IgnoreValidity: optional.Some(ignoreValidity),
 				},
 
 				MulticastPrefix: multicastPrefix,
@@ -627,7 +627,7 @@ func (a *App) SvsAloJs(
 				RefreshPing: &tlv.RefreshPing{
 					RequestId: requestId,
 					Requester: requester,
-					SentAt:    sentAt,
+					SentAt:   sentAt,
 				},
 			}
 
@@ -638,18 +638,18 @@ func (a *App) SvsAloJs(
 
 			// Persist state
 			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-
+			
 			return js.ValueOf(name.String()), nil
 		}),
 
-		// pub_refresh_ack(requestId: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;
+		// pub_refresh_ack(requestId: string, requester: string, responder: string, freshness: number, sentAt: string): Promise<string>;	
 		"pub_refresh_ack": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			requestId := p[0].String()
 			requester := p[1].String()
 			responder := p[2].String()
 			Freshness := uint64(p[3].Int())
 			SentAt := p[4].String()
-
+			
 			if requestId == "" || requester == "" || responder == "" {
 				return nil, fmt.Errorf("invalid request parameters")
 			}
@@ -671,17 +671,17 @@ func (a *App) SvsAloJs(
 
 			// Persist state
 			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-
+			
 			return js.ValueOf(name.String()), nil
 		}),
 
-		// pub_refresh_req(requestId: string, requester: string, responder: string, sentAt: string): Promise<string>;
+		// pub_refresh_req(requestId: string, requester: string, responder: string, sentAt: string): Promise<string>;	
 		"pub_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			requestId := p[0].String()
 			requester := p[1].String()
 			responder := p[2].String()
 			SentAt := p[3].String()
-
+			
 			if requestId == "" || requester == "" || responder == "" {
 				return nil, fmt.Errorf("invalid request parameters")
 			}
@@ -702,7 +702,7 @@ func (a *App) SvsAloJs(
 
 			// Persist state
 			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
-
+			
 			return js.ValueOf(name.String()), nil
 		}),
 
@@ -899,7 +899,7 @@ func (a *App) SvsAloJs(
 						// log.Warn(a, "Ignoring unknown message", "publisher", pub.Publisher)
 					}
 				}
-
+				
 				invokeBatch := func(name string, arr js.Value) {
 					if arr.Get("length").Int() == 0 {
 						return
