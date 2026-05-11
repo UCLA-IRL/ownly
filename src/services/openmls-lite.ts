@@ -1,6 +1,6 @@
 type WasmModule = {
     default: () => Promise<unknown>;
-    Client: new (identity: string) => WasmClient;
+    Client: new (workspaceCert: Uint8Array, identity: string) => WasmClient;
 };
 
 type WasmClient = {
@@ -60,9 +60,9 @@ function getU8Field(obj: unknown, field: string): Uint8Array {
 export class OpenMlsLiteClient {
     private constructor (private readonly inner: WasmClient) {}
 
-    static async create(identity: string): Promise<OpenMlsLiteClient> {
+    static async create(workspaceCert: Uint8Array, identity: string): Promise<OpenMlsLiteClient> {
         const module = await loadWasmModule();
-        return new OpenMlsLiteClient(new module.Client(identity));
+        return new OpenMlsLiteClient(new module.Client(workspaceCert, identity));
     }
 
     keyPackage(): Uint8Array {

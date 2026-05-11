@@ -101,12 +101,15 @@ export class Client {
         return Group.__wrap(ret[0]);
     }
     /**
+     * @param {Uint8Array} workspace_cert
      * @param {string} identity
      */
-    constructor(identity) {
-        const ptr0 = passStringToWasm0(identity, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    constructor(workspace_cert, identity) {
+        const ptr0 = passArray8ToWasm0(workspace_cert, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.client_new(ptr0, len0);
+        const ptr1 = passStringToWasm0(identity, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.client_new(ptr0, len0, ptr1, len1);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }

@@ -103,6 +103,8 @@ export interface WorkspaceAPI {
   name: string;
   /** Overall prefix of workspace */
   group: string;
+  /** Export the current local workspace certificate */
+  export_workspace_cert(): Promise<Uint8Array>;
 
   /** Set the encryption keys */
   set_encrypt_keys(psk: Uint8Array, dsk: Uint8Array): Promise<void>;

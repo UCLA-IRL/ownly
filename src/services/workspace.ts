@@ -186,6 +186,10 @@ export class Workspace {
     }
     await this.api?.stop();
     await this.invite.destroy();
+
+    if (globalThis.ActiveWorkspace === this) {
+      globalThis.ActiveWorkspace = null;
+    }
   }
 
   private registerRefreshHandlers(): void {
@@ -244,10 +248,6 @@ export class Workspace {
       responders: new Map(),
     });
 
-    console.log('sending refresh ping', {
-      request_id: requestId,
-      requester: currentIdentity,
-    });
     await this.provider.svs.pub_refresh_ping(
       requestId,
       currentIdentity,
@@ -483,8 +483,10 @@ export class Workspace {
       return await Workspace.setup(router.currentRoute.value.params.space as string);
     } catch (e) {
       console.error(e);
+      if (router.currentRoute.value.path !== '/') {
+        await router.push('/');
+      }
       GlobalBus.emit('wksp-error', new Error(`Failed to start workspace: ${e}`));
-      router.push('/');
       return null;
     }
   }
@@ -544,6 +546,12 @@ export class Workspace {
 
     // Join workspace - this will check invitation etc.
     const finalName = await ndn.api.join_workspace(wksp, create, payload);
+
+    // A fresh join should not reuse stale local sync/MLS/boot state from a
+    // previous membership instance of the same workspace.
+    const slug = utils.escapeUrlName(finalName);
+    await _o.ProjDb.deleteWksp(slug);
+    await _o.bootState?.del(`${finalName}/32=boot`);
 
     // Check if we have the owner permissions
     const isOwner = await ndn.api.is_workspace_owner(finalName);

@@ -322,6 +322,27 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	// Watch for directed request interests used by SOS and MLS reset.
 	var refreshReqPrefix enc.Name
 	var mlsRstReqPrefix enc.Name
+	exportWorkspaceCert := func() ([]byte, error) {
+		signer := a.trust.Suggest(wkspName.Append(enc.NewKeywordComponent("KD")))
+		if signer == nil {
+			return nil, fmt.Errorf("workspace certificate not ready")
+		}
+
+		certName := signer.KeyLocator()
+		if certName == nil {
+			return nil, fmt.Errorf("workspace signer missing key locator")
+		}
+
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil && len(certName) > 0 {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			return nil, fmt.Errorf("workspace certificate not found in store")
+		}
+
+		return wire, nil
+	}
 
 	var workspaceJs map[string]any
 	workspaceJs = map[string]any{
@@ -333,6 +354,15 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// group: string;
 		"group": js.ValueOf(wkspName.String()),
+
+		// export_workspace_cert(): Promise<Uint8Array>;
+		"export_workspace_cert": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			wire, err := exportWorkspaceCert()
+			if err != nil {
+				return nil, err
+			}
+			return jsutil.SliceToJsArray(wire), nil
+		}),
 
 		// set_encrypt_keys(psk: Uint8Array, dsk: Uint8Array): Promise<void>;
 		"set_encrypt_keys": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {

@@ -223,7 +223,7 @@ export class WorkspaceInviteManager {
   private assertOwnerCanMergeMls(action: string): void {
     if (!this.wsmeta.owner) return;
     if (this.isMasterDevice()) return;
-    throw new Error(`Only a merge-enabled owner device can ${action}`);
+    throw new Error(`Only the master owner device can ${action}`);
   }
 
   private async notifyOwnerSessionAdvanced(sessionId: string): Promise<void> {
@@ -283,7 +283,10 @@ export class WorkspaceInviteManager {
    */
   private async getMlsClient(): Promise<OpenMlsLiteClient> {
     if (!this.mlsClient) {
-      this.mlsClient = await OpenMlsLiteClient.create(this.currentMlsIdentity());
+      this.mlsClient = await OpenMlsLiteClient.create(
+        await this.api.export_workspace_cert(),
+        this.currentMlsIdentity(),
+      );
     }
     return this.mlsClient;
   }
@@ -434,7 +437,11 @@ export class WorkspaceInviteManager {
 
     await this.clearPersistedMlsState();
     await _o.stats.put(this.wsmeta.name, this.wsmeta);
-    GlobalBus.emit('wksp-error', new Error('You were removed from this workspace. Rejoin with a fresh invitation to regain access.'));
+    GlobalBus.emit(
+      'workspace-revoked',
+      this.wsmeta.name,
+      new Error('You were removed from this workspace. Rejoin with a fresh invitation to regain access.'),
+    );
   }
 
   private async restoreMlsStateIfAvailable(): Promise<boolean> {
@@ -540,7 +547,7 @@ export class WorkspaceInviteManager {
   public async joinMlsFromWelcome(welcome: Uint8Array, sessionId: string) : Promise<void> {
     const client = await this.getMlsClient();
     this.mlsGroup?.free();
-    this.mlsGroup = client.joinFromWelcome(welcome); // welcome-only first
+    this.mlsGroup = client.joinFromWelcome(welcome);
     await this.rotateWorkspaceMlsKey(sessionId);
     await this.drainPendingCommitRefs();
     this.maybeRegisterLocalOwnerDeviceRecord();
@@ -563,7 +570,6 @@ export class WorkspaceInviteManager {
     if (!this.mlsGroup && !this.wsmeta.mlsOwnerBootstrapped) {
       await this.bootstrapOwnerMls();
     }
-    console.log(`Received ${pubs.length} MLS KP refs`);
 
     for (const pub of this.uniqueOrdered(pubs)) {
       console.log(`Processing MLS KP ref from ${pub.invitee}`);

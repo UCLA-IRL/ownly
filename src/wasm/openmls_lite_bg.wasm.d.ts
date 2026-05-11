@@ -10,7 +10,7 @@ export const client_join_from_welcome: (a: number, b: number, c: number, d: numb
 export const client_key_package: (a: number) => [number, number, number, number];
 export const client_key_package_identity: (a: number, b: number, c: number) => [number, number, number, number];
 export const client_load_group: (a: number, b: number, c: number) => [number, number, number];
-export const client_new: (a: number, b: number) => [number, number, number];
+export const client_new: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const group_add_members: (a: number, b: number, c: number) => [number, number, number];
 export const group_apply_commit: (a: number, b: number, c: number) => [number, number];
 export const group_epoch: (a: number) => bigint;

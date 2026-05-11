@@ -20,11 +20,12 @@ pub struct Client {
 #[wasm_bindgen]
 impl Client {
     #[wasm_bindgen(constructor)]
-    pub fn new(identity: String) -> Result<Client, JsValue> {
+    pub fn new(workspace_cert: &[u8], identity: String) -> Result<Client, JsValue> {
         let provider = Rc::new(Provider::default());
         let suite = Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256;
+        let credential_payload = encode_workspace_credential(identity.as_bytes(), workspace_cert)?;
         let (credential, signer) = generate_credential_with_key(
-            identity.as_bytes().to_vec(),
+            credential_payload,
             CredentialType::Basic,
             suite.signature_algorithm(),
             provider.as_ref(),
@@ -61,7 +62,8 @@ impl Client {
         if credential.credential_type() != CredentialType::Basic {
             return Err(JsValue::from_str("Unsupported MLS credential type"));
         }
-        Ok(credential.serialized_content().to_vec())
+        let (identity, _workspace_cert) = decode_workspace_credential(credential.serialized_content())?;
+        Ok(identity.to_vec())
     }
 
     #[wasm_bindgen]
@@ -240,7 +242,10 @@ impl Group {
                 if m.credential.credential_type() != CredentialType::Basic {
                     return false;
                 }
-                let identity = m.credential.serialized_content();
+                let identity = match decode_workspace_credential(m.credential.serialized_content()) {
+                    Ok((identity, _workspace_cert)) => identity,
+                    Err(_) => return false,
+                };
                 let Some(device_id) = identity.strip_prefix(identity_prefix) else {
                     return false;
                 };
@@ -300,6 +305,26 @@ fn parse_key_package(
 
 fn err<E: core::fmt::Debug>(e: E) -> JsValue {
     JsValue::from_str(&format!("{e:?}"))
+}
+
+fn encode_workspace_credential(identity: &[u8], workspace_cert: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let mut out = Vec::with_capacity(4 + identity.len() + workspace_cert.len());
+    append_u32_le(&mut out, identity.len())?;
+    out.extend_from_slice(identity);
+    out.extend_from_slice(workspace_cert);
+    Ok(out)
+}
+
+fn decode_workspace_credential(payload: &[u8]) -> Result<(&[u8], &[u8]), JsValue> {
+    let mut cursor = 0usize;
+    let identity_len = read_u32_le(payload, &mut cursor)?;
+    if payload.len().saturating_sub(cursor) < identity_len {
+        return Err(JsValue::from_str("Invalid workspace MLS credential payload"));
+    }
+
+    let identity = &payload[cursor..cursor + identity_len];
+    let workspace_cert = &payload[cursor + identity_len..];
+    Ok((identity, workspace_cert))
 }
 
 fn append_u32_le(out: &mut Vec<u8>, value: usize) -> Result<(), JsValue> {

@@ -11,7 +11,7 @@ export class Client {
     key_package(): Uint8Array;
     key_package_identity(kp_bytes: Uint8Array): Uint8Array;
     load_group(group_id_bytes: Uint8Array): Group;
-    constructor(identity: string);
+    constructor(workspace_cert: Uint8Array, identity: string);
 }
 
 export class Group {
@@ -42,7 +42,7 @@ export interface InitOutput {
     readonly client_key_package: (a: number) => [number, number, number, number];
     readonly client_key_package_identity: (a: number, b: number, c: number) => [number, number, number, number];
     readonly client_load_group: (a: number, b: number, c: number) => [number, number, number];
-    readonly client_new: (a: number, b: number) => [number, number, number];
+    readonly client_new: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly group_add_members: (a: number, b: number, c: number) => [number, number, number];
     readonly group_apply_commit: (a: number, b: number, c: number) => [number, number];
     readonly group_epoch: (a: number) => bigint;

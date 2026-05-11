@@ -160,7 +160,6 @@ export class SvsProvider {
       },
 
       on_mls_kp_ref: async (pub) => {
-        console.log('svs-provider got kp refs', pub.length, pub);
           try {
             if (!this.mlsCallbacksReady) { this.pendingMlsKpRefs.push(...pub); return; }
             await this.onMlsKpRef(pub);

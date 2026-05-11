@@ -185,16 +185,20 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 		return nil
 	}
 	a.bootSyncs[key] = true
+	fail := func(err error) error {
+		delete(a.bootSyncs, key)
+		return err
+	}
 	initialState := a.LoadBootState(group)
 
 	alo, routes, err := a.NewBootSyncAlo(client, userName, group, initialState)
 	if err != nil {
 		log.Error(a, "Failed to create boot cert publisher ALO", "err", err, "group", group)
-		return err
+		return fail(err)
 	}
 	if err := a.startBootSyncAlo(client, alo, routes); err != nil {
 		log.Error(a, "Failed to start boot sync ALO", "err", err)
-		return err
+		return fail(err)
 	}
 	a.bootSyncSession = &bootSyncSession{
 		group: group,
@@ -207,13 +211,20 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 	// Subscribe to updates
 	err = a.participantSub(client)
 	if err != nil {
-		return err
+		return fail(err)
+	}
+
+	// Rejoining the same workspace can reuse an existing final workspace cert.
+	// In that case there is no local precert to publish again.
+	if len(preCert) == 0 {
+		log.Info(a, "Skipping boot precert publish; existing workspace cert already present", "group", group, "user", userName)
+		return nil
 	}
 	// Publish or detect pending precert
 	var preCertName enc.Name
 	preData, _, err := spec.Spec{}.ReadData(enc.NewWireView(preCert))
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	preCertName = preData.Name().ToFullName(preCert)
 
@@ -225,7 +236,7 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 	}).Encode()
 	if _, state, err := alo.Publish(bootPayload); err != nil {
 		log.Error(a, "Failed to publish precert", "err", err)
-		return err
+		return fail(err)
 	} else {
 		a.PersistBootState(state)
 		log.Info(a, "Published precert for signing", "name", preCertName, "app_payload_len", len(appPayload))
