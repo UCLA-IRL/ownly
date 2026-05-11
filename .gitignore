@@ -33,6 +33,9 @@ coverage
 # WebAssembly
 /ndn/**/*.wasm
 /ndn/**/wasm_exec.js
+/public/*.wasm
+/public/*.ts
+/public/openmls_lite.js
 
 # Rust build artifacts
 /openmls-lite/target/

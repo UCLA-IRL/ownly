@@ -59,6 +59,7 @@ async function leave() {
     // Remove project databases
     const slug = utils.escapeUrlName(props.target);
     await _o.ProjDb.deleteWksp(slug);
+    await _o.bootState?.del(`${props.target}/32=boot`);
 
     emit('leave');
     emit('close');

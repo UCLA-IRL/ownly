@@ -3,7 +3,6 @@
 package app
 
 import (
-	"crypto/aes"
 	"crypto/ecdh"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -319,10 +318,32 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	a.dsk = nil
 	a.aes = nil
 
-	// Watch for republish requests interests to republish Yjs Deltas
-	var refreshReqPrefix enc.Name
-
 	// After bootstrapping
+	// Watch for directed request interests used by SOS and MLS reset.
+	var refreshReqPrefix enc.Name
+	var mlsRstReqPrefix enc.Name
+	exportWorkspaceCert := func() ([]byte, error) {
+		signer := a.trust.Suggest(wkspName.Append(enc.NewKeywordComponent("KD")))
+		if signer == nil {
+			return nil, fmt.Errorf("workspace certificate not ready")
+		}
+
+		certName := signer.KeyLocator()
+		if certName == nil {
+			return nil, fmt.Errorf("workspace signer missing key locator")
+		}
+
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil && len(certName) > 0 {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			return nil, fmt.Errorf("workspace certificate not found in store")
+		}
+
+		return wire, nil
+	}
+
 	var workspaceJs map[string]any
 	workspaceJs = map[string]any{
 		// name: string;
@@ -333,6 +354,15 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 		// group: string;
 		"group": js.ValueOf(wkspName.String()),
+
+		// export_workspace_cert(): Promise<Uint8Array>;
+		"export_workspace_cert": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			wire, err := exportWorkspaceCert()
+			if err != nil {
+				return nil, err
+			}
+			return jsutil.SliceToJsArray(wire), nil
+		}),
 
 		// set_encrypt_keys(psk: Uint8Array, dsk: Uint8Array): Promise<void>;
 		"set_encrypt_keys": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
@@ -346,12 +376,29 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if err != nil {
 				return nil, err
 			}
-			a.aes, err = aes.NewCipher(symKey)
-			if err != nil {
+			// set Session ID to a static number for legacy path
+			a.sessionId = LegacySessionID
+			if err := a.installEncryptKey(a.sessionId, symKey); err != nil {
 				return nil, err
 			}
 			a.ivb = identitySigner.KeyName().Hash()
 
+			return nil, nil
+		}),
+
+		// set_encrypt_key(sessionId: string, key: Uint8Array): Promise<void>;
+		"set_encrypt_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			sessionID := p[0].String()
+			key := jsutil.JsArrayToSlice(p[1])
+			if sessionID == "" || len(key) == 0 {
+				return nil, fmt.Errorf("invalid key")
+			}
+
+			if err := a.installEncryptKey(sessionID, key); err != nil {
+				return nil, err
+			}
+			a.ivb = identitySigner.KeyName().Hash()
+			a.sessionId = sessionID
 			return nil, nil
 		}),
 
@@ -373,6 +420,10 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			if len(refreshReqPrefix) > 0 {
 				_ = a.engine.DetachHandler(refreshReqPrefix)
 				client.WithdrawPrefix(refreshReqPrefix, nil)
+			}
+			if len(mlsRstReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(mlsRstReqPrefix)
+				client.WithdrawPrefix(mlsRstReqPrefix, nil)
 			}
 
 			if err := client.Stop(); err != nil {
@@ -518,6 +569,91 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			return nil, nil
 		}),
 
+		// set_on_mls_rst_req(responder: string, cb: (requestId: string, requester: string) => Promise<void>): Promise<void>;
+		"set_on_mls_rst_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			responderName, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			cb := p[1]
+			if cb.Type() != js.TypeFunction {
+				return nil, fmt.Errorf("MLS reset request callback must be a function")
+			}
+
+			if len(mlsRstReqPrefix) > 0 {
+				_ = a.engine.DetachHandler(mlsRstReqPrefix)
+				client.WithdrawPrefix(mlsRstReqPrefix, nil)
+			}
+
+			nextMlsRstReqPrefix := wkspName.
+				Append(enc.NewGenericComponent("root")).
+				Append(enc.NewKeywordComponent("MLS_RST_REQ")).
+				Append(responderName...)
+
+			mlsRstReqPrefix = nextMlsRstReqPrefix
+
+			if err := a.engine.AttachHandler(mlsRstReqPrefix, func(args ndn.InterestHandlerArgs) {
+				name := args.Interest.Name()
+
+				if len(name) < len(mlsRstReqPrefix)+2 {
+					log.Warn(nil, "Invalid MLS reset request name", "name", name)
+					return
+				}
+
+				requestId := name[len(mlsRstReqPrefix)].String()
+				requester := name[len(mlsRstReqPrefix)+1:].String()
+
+				go func() {
+					replyStatus := func(status string) {
+						signer := client.SuggestSigner(name)
+						if signer == nil {
+							log.Warn(nil, "No signer for MLS reset response", "name", name, "status", status)
+							return
+						}
+
+						data, err := spec.Spec{}.MakeData(
+							name,
+							&ndn.DataConfig{
+								Freshness: optional.Some(time.Second),
+							},
+							enc.Wire{[]byte(status)},
+							signer,
+						)
+						if err != nil {
+							log.Warn(nil, "Failed to make MLS reset response", "err", err, "status", status)
+							return
+						}
+
+						if err := args.Reply(data.Wire); err != nil {
+							log.Warn(nil, "Failed to reply to MLS reset request", "err", err, "status", status)
+						}
+					}
+
+					_, err := jsutil.Await(cb.Invoke(
+						js.ValueOf(requestId),
+						js.ValueOf(requester),
+					))
+					if err != nil {
+						log.Warn(nil, "MLS reset request callback failed", "err", err)
+						replyStatus("fail")
+						return
+					}
+
+					replyStatus("ok")
+				}()
+			}); err != nil {
+				return nil, err
+			}
+
+			client.AnnouncePrefix(ndn.Announcement{
+				Name:    mlsRstReqPrefix,
+				Expose:  true,
+				OnError: nil,
+			})
+
+			return nil, nil
+		}),
+
 		// send_refresh_req(name: string): Promise<"ok" | "fail">;
 		"send_refresh_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			name, err := enc.NameFromStr(p[0].String())
@@ -567,6 +703,67 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 							}
 
 							ch <- refreshResult{status: status}
+						},
+					})
+				},
+			})
+
+			result := <-ch
+			if result.err != nil {
+				return nil, result.err
+			}
+			return js.ValueOf(result.status), nil
+		}),
+
+		// send_mls_rst_req(name: string): Promise<"ok" | "fail">;
+		"send_mls_rst_req": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			name, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+
+			type mlsResetResult struct {
+				status string
+				err    error
+			}
+			ch := make(chan mlsResetResult, 1)
+			client.ExpressR(ndn.ExpressRArgs{
+				Name: name,
+				Config: &ndn.InterestConfig{
+					MustBeFresh: true,
+					Lifetime:    optional.Some(5 * time.Second),
+				},
+				Retries: 2,
+				Callback: func(args ndn.ExpressCallbackArgs) {
+					if args.Result == ndn.InterestResultError {
+						ch <- mlsResetResult{err: fmt.Errorf("MLS reset request failed: %w", args.Error)}
+						return
+					}
+					if args.Result != ndn.InterestResultData {
+						ch <- mlsResetResult{err: fmt.Errorf("MLS reset request failed with result: %s", args.Result)}
+						return
+					}
+
+					client.ValidateExt(ndn.ValidateExtArgs{
+						Data:       args.Data,
+						SigCovered: args.SigCovered,
+						Callback: func(valid bool, err error) {
+							if !valid {
+								if err != nil {
+									ch <- mlsResetResult{err: fmt.Errorf("invalid MLS reset response: %w", err)}
+								} else {
+									ch <- mlsResetResult{err: fmt.Errorf("invalid MLS reset response")}
+								}
+								return
+							}
+
+							status := string(args.Data.Content().Join())
+							if status != "ok" && status != "fail" {
+								ch <- mlsResetResult{err: fmt.Errorf("invalid MLS reset response status: %q", status)}
+								return
+							}
+
+							ch <- mlsResetResult{status: status}
 						},
 					})
 				},
@@ -1085,8 +1282,93 @@ func (a *App) SvsAloJs(
 			return nil, nil
 		}),
 
+		// pub_mls_kp_ref(invitee: string, blobName: string): Promise<string>;
+		"pub_mls_kp_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee := p[0].String()
+			blobName := p[1].String()
+			sessionId := p[2].String()
+			log.Info(nil, "MLS KP publish request", "invitee", invitee, "blob", blobName)
+			if invitee == "" || blobName == "" {
+				return nil, fmt.Errorf("invalid invitee or blob name")
+			}
+
+			pub := &tlv.Message{
+				MlsKeyPackage: &tlv.MlsBlobRef{
+					Invitee:   invitee,
+					BlobName:  blobName,
+					SessionId: sessionId,
+				},
+			}
+			name, state, err := alo.Publish(pub.Encode())
+			if err != nil {
+				return nil, err
+			}
+			log.Info(nil, "MLS KP published", "name", name, "boot", alo.BootTime(), "seq", alo.SeqNo())
+			// Persist state
+			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
+
+			return js.ValueOf(name.String()), nil
+		}),
+
+		// pub_mls_welcome_ref(invitee: string, blobName: string): Promise<string>;
+		"pub_mls_welcome_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee := p[0].String()
+			blobName := p[1].String()
+			sessionId := p[2].String()
+			if invitee == "" || blobName == "" || sessionId == "" {
+				return nil, fmt.Errorf("invalid invitee, blob name, or session ID")
+			}
+
+			pub := &tlv.Message{
+				MlsWelcome: &tlv.MlsBlobRef{
+					Invitee:   invitee,
+					BlobName:  blobName,
+					SessionId: sessionId,
+				},
+			}
+			name, state, err := alo.Publish(pub.Encode())
+			if err != nil {
+				return nil, err
+			}
+
+			// Persist state
+			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
+
+			return js.ValueOf(name.String()), nil
+		}),
+
+		// pub_mls_commit_ref(invitee: string, blobName: string): Promise<string>;
+		"pub_mls_commit_ref": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee := p[0].String()
+			blobName := p[1].String()
+			sessionId := p[2].String()
+			if invitee == "" || blobName == "" || sessionId == "" {
+				return nil, fmt.Errorf("invalid invitee, blob name, or session ID")
+			}
+
+			pub := &tlv.Message{
+				MlsCommit: &tlv.MlsBlobRef{
+					Invitee:   invitee,
+					BlobName:  blobName,
+					SessionId: sessionId,
+				},
+			}
+			name, state, err := alo.Publish(pub.Encode())
+			if err != nil {
+				return nil, err
+			}
+
+			// Persist state
+			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
+
+			return js.ValueOf(name.String()), nil
+		}),
+
 		// subscribe({
 		//   on_yjs_delta,
+		//   on_mls_kp_ref,
+		//   on_mls_welcome_ref,
+		//   on_mls_commit_ref,
 		//   on_refresh_ping,
 		//   on_refresh_pong,
 		// }): Promise<void>;
@@ -1094,6 +1376,9 @@ func (a *App) SvsAloJs(
 			// Send a list of publications to the JS callback
 			sendPub := func(pubs []ndn_sync.SvsPub) {
 				yjsDeltas := js.Global().Get("Array").New()
+				mlsKpRefs := js.Global().Get("Array").New()
+				mlsWelcomeRefs := js.Global().Get("Array").New()
+				mlsCommitRefs := js.Global().Get("Array").New()
 				refreshPings := js.Global().Get("Array").New()
 				refreshPongs := js.Global().Get("Array").New()
 
@@ -1161,6 +1446,40 @@ func (a *App) SvsAloJs(
 							delete(a.dskReqs, peerHex)
 						}
 
+					// Handle incoming MLS KeyPackage reference
+					case pmsg.MlsKeyPackage != nil:
+						log.Info(nil, "Decoded MLS KP ref", "invitee", pmsg.MlsKeyPackage.Invitee, "blob", pmsg.MlsKeyPackage.BlobName)
+						mlsKpRefs.Call("push", js.ValueOf(map[string]any{
+							"invitee":    pmsg.MlsKeyPackage.Invitee,
+							"blob_name":  pmsg.MlsKeyPackage.BlobName,
+							"session_id": pmsg.MlsKeyPackage.SessionId,
+							"publisher":  pub.Publisher.String(),
+							"boot_time":  pub.BootTime,
+							"seq_num":    pub.SeqNum,
+						}))
+
+					// Handle incoming MLS Welcome reference
+					case pmsg.MlsWelcome != nil:
+						mlsWelcomeRefs.Call("push", js.ValueOf(map[string]any{
+							"invitee":    pmsg.MlsWelcome.Invitee,
+							"blob_name":  pmsg.MlsWelcome.BlobName,
+							"session_id": pmsg.MlsWelcome.SessionId,
+							"publisher":  pub.Publisher.String(),
+							"boot_time":  pub.BootTime,
+							"seq_num":    pub.SeqNum,
+						}))
+
+					// Handle incoming MLS Commit reference
+					case pmsg.MlsCommit != nil:
+						mlsCommitRefs.Call("push", js.ValueOf(map[string]any{
+							"invitee":    pmsg.MlsCommit.Invitee,
+							"blob_name":  pmsg.MlsCommit.BlobName,
+							"session_id": pmsg.MlsCommit.SessionId,
+							"publisher":  pub.Publisher.String(),
+							"boot_time":  pub.BootTime,
+							"seq_num":    pub.SeqNum,
+						}))
+
 					case pmsg.RefreshPing != nil:
 						refreshPings.Call("push", js.ValueOf(map[string]any{
 							"request_id": pmsg.RefreshPing.RequestId,
@@ -1202,6 +1521,9 @@ func (a *App) SvsAloJs(
 				}
 
 				invokeBatch("on_yjs_delta", yjsDeltas)
+				invokeBatch("on_mls_kp_ref", mlsKpRefs)
+				invokeBatch("on_mls_welcome_ref", mlsWelcomeRefs)
+				invokeBatch("on_mls_commit_ref", mlsCommitRefs)
 				invokeBatch("on_refresh_ping", refreshPings)
 				invokeBatch("on_refresh_pong", refreshPongs)
 			}

@@ -33,7 +33,7 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue';
-import { RouterView, useRoute } from 'vue-router';
+import { RouterView, useRoute, useRouter } from 'vue-router';
 
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faBars } from '@fortawesome/free-solid-svg-icons';
@@ -63,6 +63,7 @@ marked.use(
 );
 
 const route = useRoute();
+const router = useRouter();
 const showLogin = ref(true);
 const showNav = ref(false);
 
@@ -80,14 +81,37 @@ watch(
 
 onMounted(() => {
   GlobalBus.addListener('wksp-error', wkspErrorListener);
+  GlobalBus.addListener('workspace-revoked', workspaceRevokedListener);
 });
 
 onUnmounted(() => {
   GlobalBus.removeListener('wksp-error', wkspErrorListener);
+  GlobalBus.removeListener('workspace-revoked', workspaceRevokedListener);
 });
 
 function wkspErrorListener(error: Error) {
   Toast.error(error.toString());
+}
+
+function workspaceRevokedListener(workspace: string, error: Error) {
+  void (async () => {
+    if (globalThis.ActiveWorkspace?.metadata.name === workspace) {
+      try {
+        await globalThis.ActiveWorkspace.destroy();
+      } catch (e) {
+        console.error(e);
+        error = new Error(`${error}\nFailed to stop revoked workspace: ${e}`);
+      } finally {
+        globalThis.ActiveWorkspace = null;
+      }
+    }
+
+    if (router.currentRoute.value.path !== '/') {
+      await router.push('/');
+    }
+
+    Toast.error(error.toString());
+  })();
 }
 </script>
 

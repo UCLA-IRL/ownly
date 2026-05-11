@@ -3,7 +3,7 @@ import * as awareProto from 'y-protocols/awareness.js';
 
 import * as utils from '@/utils';
 
-import type { AwarenessApi, SvsAloApi, WorkspaceAPI, RefreshPongPub, RefreshPingPub, SvsAloSub} from '@/services/ndn';
+import type { AwarenessApi, SvsAloApi, WorkspaceAPI, RefreshPongPub, RefreshPingPub, SvsAloSub, MlsRefPub } from '@/services/ndn';
 import type { AwarenessLocalState } from '@/services/types';
 import type { ProjDb } from '@/services/database/proj_db';
 import { Bundler } from "@/utils/bundler.ts";
@@ -11,6 +11,8 @@ import { Bundler } from "@/utils/bundler.ts";
 /**
  * Yjs documents backed by an SVS sync group.
  */
+type MlsRefHandler = (pubs: MlsRefPub[]) => Promise<void>;
+
 export class SvsProvider {
   // Maps uuids to doc, bundler, and awareness
   private readonly docs = new Map<string, Y.Doc>();
@@ -21,6 +23,14 @@ export class SvsProvider {
   private lastCompaction = 0;
   private isCompacting = false;
 
+  private onMlsKpRef: MlsRefHandler = async () => {};
+  private onMlsWelcomeRef: MlsRefHandler = async () => {};
+  private onMlsCommitRef: MlsRefHandler = async () => {};
+  private mlsCallbacksReady = false;
+  private pendingMlsKpRefs: MlsRefPub[] = [];
+  private pendingMlsWelcomeRefs: MlsRefPub[] = [];
+  private pendingMlsCommitRefs: MlsRefPub[] = [];
+
   private readonly refreshPingSubs = new Set<SvsAloSub<RefreshPingPub>>();
   private readonly refreshPongSubs = new Set<SvsAloSub<RefreshPongPub>>();
 
@@ -29,6 +39,29 @@ export class SvsProvider {
     private readonly wksp: WorkspaceAPI,
     public readonly svs: SvsAloApi,
   ) {}
+
+  public setMlsCallbacks(cb: {
+  onMlsKpRef?: MlsRefHandler;
+  onMlsWelcomeRef?: MlsRefHandler;
+  onMlsCommitRef?: MlsRefHandler;
+  }) {
+    if (cb.onMlsKpRef) this.onMlsKpRef = cb.onMlsKpRef;
+    if (cb.onMlsWelcomeRef) this.onMlsWelcomeRef = cb.onMlsWelcomeRef;
+    if (cb.onMlsCommitRef) this.onMlsCommitRef = cb.onMlsCommitRef;
+
+    this.mlsCallbacksReady = true;
+    void this.flushPendingMlsRefs();
+  }
+
+  private async flushPendingMlsRefs() {
+    const kp = this.pendingMlsKpRefs.splice(0);
+    const w = this.pendingMlsWelcomeRefs.splice(0);
+    const c = this.pendingMlsCommitRefs.splice(0);
+
+    if (kp.length) await this.onMlsKpRef(kp);
+    if (w.length) await this.onMlsWelcomeRef(w);
+    if (c.length) await this.onMlsCommitRef(c);
+  }
 
   /**
    * Create a new SVS provider for a project.
@@ -126,6 +159,33 @@ export class SvsProvider {
         }
       },
 
+      on_mls_kp_ref: async (pub) => {
+          try {
+            if (!this.mlsCallbacksReady) { this.pendingMlsKpRefs.push(...pub); return; }
+            await this.onMlsKpRef(pub);
+          } catch (e) {
+            console.error('MLS kp callback failed', e);
+          }
+      },
+
+      on_mls_welcome_ref: async (pub) => {
+          try {
+            if (!this.mlsCallbacksReady) { this.pendingMlsWelcomeRefs.push(...pub); return; }
+            await this.onMlsWelcomeRef(pub);
+          } catch (e) {
+            console.error('MLS welcome callback failed', e);
+          }
+      },
+
+      on_mls_commit_ref: async (pub) => {
+          try {
+            if (!this.mlsCallbacksReady) { this.pendingMlsCommitRefs.push(...pub); return; }
+            await this.onMlsCommitRef(pub);
+          } catch (e) {
+            console.error('MLS commit callback failed', e);
+          }
+      },
+
       on_refresh_ping: async (pubs) => {
         await this.emitBatch(this.refreshPingSubs, pubs);
       },
@@ -136,6 +196,13 @@ export class SvsProvider {
 
     });
     await this.svs.start();
+  }
+
+  public async stateGet(type: string): Promise<Uint8Array | undefined> {
+    return await this.db.stateGet(type);
+  }
+  public async statePut(type: string, state: Uint8Array): Promise<void> {
+    await this.db.statePut(type, state);
   }
 
   public onRefreshPing(cb: SvsAloSub<RefreshPingPub>): () => void {

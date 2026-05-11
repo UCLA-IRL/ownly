@@ -18,9 +18,18 @@ type Message struct {
 	RefreshPong *RefreshPong `tlv:"0xD2"`
 	//+field:struct:BootJoin
 	BootJoin *BootJoin `tlv:"0xD6"`
+	// MLS messages
+	//+field:struct:MlsBlobRef
+	MlsKeyPackage *MlsBlobRef `tlv:"0xD8"`
+	//+field:struct:MlsBlobRef
+	MlsCommit *MlsBlobRef `tlv:"0xDA"`
+	//+field:struct:MlsBlobRef
+	MlsWelcome *MlsBlobRef `tlv:"0xDC"`
 }
 
 type AeadBlock struct {
+	//+field:string
+	SessionID string `tlv:"0xC7"`
 	//+field:binary
 	IV []byte `tlv:"0xC8"`
 	//+field:binary
@@ -80,4 +89,13 @@ type BootJoin struct {
 	PreCertFullName []byte `tlv:"0x580"`
 	//+field:binary
 	AppPayload []byte `tlv:"0x582"`
+}
+
+type MlsBlobRef struct {
+	//+field:string
+	Invitee string `tlv:"0x5A2"`
+	//+field:string
+	BlobName string `tlv:"0x5A4"`
+	//+field:string
+	SessionId string `tlv:"0x5A6"`
 }

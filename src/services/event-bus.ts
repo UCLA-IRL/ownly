@@ -37,6 +37,12 @@ export const GlobalBus = new EventEmitter() as TypedEmitter<{
   'wksp-error': (error: Error) => void;
 
   /**
+   * Event when local access to a workspace was revoked and the UI should
+   * immediately tear down the active session.
+   */
+  'workspace-revoked': (workspace: string, error: Error) => void;
+
+  /**
    * Event when connectivity changes.
    * The state is stored in _ndnd_conn_state
    */

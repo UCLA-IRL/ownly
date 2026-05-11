@@ -94,6 +94,9 @@
 // Republish Request for SOS
 #refresh_req: #owner/wksp/"root"/"32=REFRESH_REQ"/#user/_/_/#requester/_ <= #user_cert | #owner_cert
 
+// MLS state reset Request
+#mls_rst_req: #owner/wksp/"root"/"32=MLS_RST_REQ"/#owner/_/_/#requester/_ <= #owner_cert
+
 // DSK exchange
 #dsk: #owner/wksp/"root"/"32=DSK"/_ <= #owner_cert | #user_cert
 

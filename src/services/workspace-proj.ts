@@ -89,6 +89,8 @@ export class WorkspaceProjManager {
 
   /**
    * Republish the encrypted Yjs state for every project provider.
+   * Existing project instances are reused; unopened projects are loaded
+   * temporarily for the republish and then torn down again.
    */
   public async republishEncryptedState(): Promise<void> {
     for (const meta of this.getProjects()) {

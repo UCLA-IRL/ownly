@@ -14,7 +14,8 @@
     "lint": "eslint . --fix",
     "format": "prettier --write src/",
     "go:wasm": "cd ndn/cmd && cross-env GOOS=js GOARCH=wasm go build -ldflags \"-s -w\" -o ../../public/main.wasm main.go",
-    "go:js": "cp $(go env GOROOT)/misc/wasm/wasm_exec.js ./public/wasm_exec.js"
+    "go:js": "cp $(go env GOROOT)/misc/wasm/wasm_exec.js ./public/wasm_exec.js",
+    "mls:wasm": "cd openmls-lite && cargo build --target wasm32-unknown-unknown --release --no-default-features --features wasm && wasm-bindgen --target web --out-dir ../src/wasm --out-name openmls_lite target/wasm32-unknown-unknown/release/openmls_lite.wasm"
   },
   "dependencies": {
     "@dicebear/collection": "^9.2.2",

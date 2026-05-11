@@ -1,0 +1,29 @@
+[package]
+name = "openmls-lite"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+openmls = { version = "0.7.1" }
+openmls_rust_crypto = { version = "0.4.1", optional = true }
+openmls_libcrux_crypto = { version = "0.2.2", optional = true }
+openmls_basic_credential = "0.4.1"
+wasm-bindgen = "0.2.92"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+aes-gcm = "0.10"
+openmls_traits = "0.4.1"
+rand = "0.8"
+tls_codec = { version = "0.4.2", features = ["derive", "serde", "mls"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+
+[features]
+default = ["native"]
+native = ["openmls_rust_crypto"]
+wasm = ["openmls/js", "openmls_rust_crypto", "getrandom/wasm_js"]
