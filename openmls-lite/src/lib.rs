@@ -8,9 +8,6 @@ use tls_codec::{Serialize, Deserialize};
 use std::rc::Rc;
 use std::collections::HashMap;
 
-#[cfg(target_arch = "wasm32")]
-type Provider = openmls_libcrux_crypto::Provider;
-#[cfg(not(target_arch = "wasm32"))]
 type Provider = openmls_rust_crypto::OpenMlsRustCrypto;
 
 #[wasm_bindgen]
@@ -25,7 +22,7 @@ impl Client {
     #[wasm_bindgen(constructor)]
     pub fn new(identity: String) -> Result<Client, JsValue> {
         let provider = Rc::new(Provider::default());
-        let suite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+        let suite = Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256;
         let (credential, signer) = generate_credential_with_key(
             identity.as_bytes().to_vec(),
             CredentialType::Basic,
@@ -41,6 +38,7 @@ impl Client {
             self.provider.as_ref(),
             self.signer.as_ref(),
             &MlsGroupCreateConfig::builder()
+                .ciphersuite(Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256)
                 .use_ratchet_tree_extension(true)
                 .build(),
             self.credential.clone(),
@@ -51,7 +49,7 @@ impl Client {
 
     #[wasm_bindgen]
     pub fn key_package(&self) -> Result<Vec<u8>, JsValue> {
-        let suite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+        let suite = Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256;
         let kp = generate_key_package(suite, self.provider.as_ref(), self.signer.as_ref(), self.credential.clone())?;
         kp.tls_serialize_detached().map_err(err)
     }

@@ -26,9 +26,4 @@ getrandom = { version = "0.3.4", features = ["wasm_js"] }
 [features]
 default = ["native"]
 native = ["openmls_rust_crypto"]
-wasm = ["openmls/js", "openmls/libcrux-provider", "openmls_libcrux_crypto", "getrandom/wasm_js"]
-
-[[bin]]
-name = "openmls-lite"
-path = "src/main.rs"
-required-features = ["native"]
+wasm = ["openmls/js", "openmls_rust_crypto", "getrandom/wasm_js"]
