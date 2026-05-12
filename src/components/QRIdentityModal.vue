@@ -8,7 +8,7 @@
     </p>
 
     <p class="my-1">
-      <code class="select-all">{{ name }}</code>
+      <code class="select-all">{{ displayName }}</code>
     </p>
 
     <img class="qr" v-if="qrimg" :src="qrimg" />
@@ -22,12 +22,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import QRCode from 'qrcode';
 
 import ModalComponent from '@/components/ModalComponent.vue';
 import ndn from '@/services/ndn';
+import * as utils from '@/utils';
 
 const props = defineProps({
   show: {
@@ -39,6 +40,7 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 const name = ref(String());
 const qrimg = ref(String());
+const displayName = computed(() => utils.stripNdnPrefixForDisplay(name.value));
 
 watch(
   () => props.show,

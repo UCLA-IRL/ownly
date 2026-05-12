@@ -340,7 +340,9 @@ export class Workspace {
     // Get workspace configuration from storage
     const metadata = await _o.stats.get(space);
     if (!metadata) {
-      throw new Error(`Workspace not found, have you joined it? <br/> [${space}]`);
+      throw new Error(
+        `Workspace not found, have you joined it? <br/> [${utils.stripNdnPrefixForDisplay(space)}]`,
+      );
     }
 
     // Store last access time

@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 
 import { GlobalBus } from '@/services/event-bus';
 import { SvsProvider } from '@/services/svs-provider';
+import * as utils from '@/utils';
 
 import type { IChatChannel, IChatMessage } from '@/services/types';
 import type TypedEmitter from 'typed-emitter';
@@ -91,7 +92,7 @@ export class WorkspaceChat {
       uuid: String(), // auto
       user: 'ownly-bot',
       ts: Date.now(),
-      message: `#${channel.name} was created by ${this.api.name}`,
+      message: `#${channel.name} was created by ${utils.stripNdnPrefixForDisplay(this.api.name)}`,
     });
   }
 

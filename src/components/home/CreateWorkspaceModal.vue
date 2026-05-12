@@ -28,7 +28,7 @@
 
     <div>
       Your workspace will have the network name &ndash;<br />
-      <code>{{ fullName }}</code>
+      <code>{{ displayFullName }}</code>
     </div>
 
     <div class="field mt-2 has-text-right">
@@ -48,6 +48,7 @@ import ModalComponent from '@/components/ModalComponent.vue';
 import ndn from '@/services/ndn';
 import { Workspace } from '@/services/workspace';
 import { Toast } from '@/utils/toast';
+import * as utils from '@/utils';
 
 defineProps({
   show: {
@@ -70,6 +71,7 @@ const opts = ref({
 
 // Name we intend to give the workspace
 const fullName = computed(() => `${idName.value}/${opts.value.name.trim()}`);
+const displayFullName = computed(() => utils.stripNdnPrefixForDisplay(fullName.value));
 
 // No need to reset these values on show
 onMounted(async () => {

@@ -47,7 +47,9 @@ export class WorkspaceInviteManager {
   public async tryInvite(invitee: IProfile): Promise<void> {
     // Check if the name is already in the list
     if (this.inviteeProfiles.has(invitee.name)) {
-      throw new Error(`Invitation for ${invitee.name} already exists`);
+      throw new Error(
+        `Invitation for ${utils.stripNdnPrefixForDisplay(invitee.name)} already exists`,
+      );
     }
 
     // Add invitee

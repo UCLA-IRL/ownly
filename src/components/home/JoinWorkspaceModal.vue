@@ -84,7 +84,7 @@ watch(
     // Check if URL specifies a workspace
     if (route.name === 'join') {
       const space = route.params.space as string;
-      opts.value.name = utils.unescapeUrlName(space || String());
+      opts.value.name = utils.stripNdnPrefixForDisplay(utils.unescapeUrlName(space || String()));
       opts.value.label = (route.query.label as string) || String();
       opts.value.psk = (route.query.psk as string) || String();
     }
@@ -97,7 +97,7 @@ async function join() {
 
     // Validate the inputs
     const label = opts.value.label.trim();
-    const name = opts.value.name.trim();
+    const name = utils.restoreNdnPrefixFromDisplay(opts.value.name.trim());
     const psk = opts.value.psk.trim();
     if (!label || !name || !psk) {
       throw new Error('Please fill in all the fields');

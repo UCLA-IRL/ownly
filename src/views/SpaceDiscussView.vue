@@ -43,7 +43,7 @@
                 <div class="message">
                   <div class="header" v-if="!skipHeader(item, index)">
                     <span class="name" :class="{ 'is-agent': isAgentMessage(item) }">
-                      {{ item.user }}
+                      {{ displayUserName(item.user) }}
                       <span v-if="isAgentMessage(item)" class="tag is-small is-info ml-1">AI</span>
                     </span>
                     <span class="time">{{ formatTime(item) }}</span>
@@ -206,6 +206,10 @@ function formatTime(item: IChatMessage) {
   const formatted = formatter.format(new Date(item.ts));
   item.tsStr = formatted;
   return formatted;
+}
+
+function displayUserName(name: string) {
+  return utils.stripNdnPrefixForDisplay(name);
 }
 
 /** Send a message to the workspace */

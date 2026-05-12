@@ -15,7 +15,7 @@
     <p class="mt-2">Enter an email address or NDN name below</p>
 
     <div class="field mt-2">
-      <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
+      <input class="input" type="text" :placeholder="`name@example.com or /user-name`" v-model="inviteInput"
         :disabled="!isOwner" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste" autofocus />
     </div>
 
@@ -39,7 +39,7 @@
 
                 <div class="Info">
                   <div class="header">
-                    <span class="name">{{ item.name }}</span>
+                    <span class="name">{{ displayProfileName(item.name) }}</span>
                   </div>
 
                   <div class="email" v-if="item.email">{{ item.email }}</div>
@@ -84,7 +84,7 @@
 
                 <div class="Info">
                   <div class="header">
-                    <span class="name">{{ item.name }}</span>
+                    <span class="name">{{ displayProfileName(item.name) }}</span>
                   </div>
 
                   <div class="email" v-if="item.email">{{ item.email }}</div>
@@ -131,7 +131,7 @@
     <div class="title is-6 mb-4">Current Workspace Members</div>
     This list currenly only shows members who have published messages in discussions.
     <p v-if="members.length > 0" class="mt-4">
-      <code>{{ members.join('\n') }}</code>
+      <code>{{ displayMembers.join('\n') }}</code>
     </p>
 
   </ModalComponent>
@@ -171,6 +171,9 @@ const members = ref([] as string[]);
 const invitees = ref([] as IProfile[]);
 const pendingInvitees = ref([] as IProfile[]);
 const pendingRequests = ref([] as IProfile[]);
+const displayMembers = computed(() =>
+  members.value.map((member) => utils.stripNdnPrefixForDisplay(member)),
+);
 
 const allInvitees = computed(() => {
   return [
@@ -224,7 +227,7 @@ async function copyInviteeList() {
       if (profile.email) {
         return `${profile.email}`;
       } else {
-        return `${profile.name}`;
+        return utils.stripNdnPrefixForDisplay(profile.name);
       }
     }).toString()
   )
@@ -280,7 +283,7 @@ function addInvitee(invitee: string) {
 
   // Check if it is an NDN name
   if (entry.startsWith('/')) {
-    new_profile = { name: entry };
+    new_profile = { name: utils.restoreNdnPrefixFromDisplay(entry) };
   } else {
     // Validate the email address
     if (!utils.validateEmail(entry)) {
@@ -297,7 +300,7 @@ function addInvitee(invitee: string) {
 
   // Check repetition
   if (allInvitees.value.some((profile) => profile.name === new_profile.name)) {
-    Toast.error(`${new_profile.name} already in the invitation list`);
+    Toast.error(`${displayProfileName(new_profile.name)} already in the invitation list`);
     return;
   }
 
@@ -322,7 +325,7 @@ function addRequest(invitee: string) {
 
   // Check if it is an NDN name
   if (entry.startsWith('/')) {
-    new_profile = { name: entry };
+    new_profile = { name: utils.restoreNdnPrefixFromDisplay(entry) };
   } else {
     // Validate the email address
     if (!utils.validateEmail(entry)) {
@@ -381,14 +384,14 @@ async function acceptRequest(invitee: IProfile) {
     // Generate and publish invitation to sync
     await wksp.value.invite.tryInvite(invitee);
   } catch (err) {
-    Toast.error(`Failed to invite ${invitee.name}: ${err}`);
+    Toast.error(`Failed to invite ${displayProfileName(invitee.name)}: ${err}`);
     return; // rare
   }
 
   invitees.value.push(invitee);
 
   // Finish
-  Toast.success(`Invited ${invitee.name} to workspace!`);
+  Toast.success(`Invited ${displayProfileName(invitee.name)} to workspace!`);
 }
 
 function denyRequest(invitee: IProfile) {
@@ -412,7 +415,7 @@ async function send() {
       // Generate and publish invitation to sync
       await wksp.value.invite.tryInvite(invitee);
     } catch (err) {
-      Toast.error(`Failed to invite ${invitee.name}: ${err}`);
+      Toast.error(`Failed to invite ${displayProfileName(invitee.name)}: ${err}`);
       return; // rare
     }
   }
@@ -420,6 +423,10 @@ async function send() {
   // Finish
   Toast.success(`Invited ${pendingInvitees.value.length} users to workspace!`);
   emit('close');
+}
+
+function displayProfileName(name: string): string {
+  return utils.stripNdnPrefixForDisplay(name);
 }
 
 </script>

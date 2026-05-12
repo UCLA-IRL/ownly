@@ -3,7 +3,7 @@
     <div class="title is-5 mb-4">Leave Workspace</div>
     <div class="field">
       <p>
-        You are about to leave the workspace "{{ target }}" from your dashboard. This is a local
+        You are about to leave the workspace "{{ displayTarget }}" from your dashboard. This is a local
         action, your data will not be deleted.
       </p>
     </div>
@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 import ModalComponent from '../ModalComponent.vue';
 
@@ -42,6 +42,7 @@ const emit = defineEmits<{
 }>();
 
 const loading = ref(false);
+const displayTarget = computed(() => utils.stripNdnPrefixForDisplay(props.target));
 
 async function leave() {
   try {
@@ -63,10 +64,10 @@ async function leave() {
     emit('leave');
     emit('close');
 
-    Toast.info(`Left workspace ${props.target}`);
+    Toast.info(`Left workspace ${displayTarget.value}`);
   } catch (err) {
     console.error(err);
-    Toast.error(`Error leaving workspace ${props.target}: ${err}`);
+    Toast.error(`Error leaving workspace ${displayTarget.value}: ${err}`);
   } finally {
     loading.value = false;
   }

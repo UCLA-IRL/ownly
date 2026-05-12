@@ -1,7 +1,7 @@
 <template>
   <ModalComponent :show="show" @close="emit('close')">
     <div class="title is-5 mb-4">
-      Invite <code>{{ name }}</code>
+      Invite <code>{{ displayName }}</code>
     </div>
 
     <div v-if="joinLink" class="my-2">
@@ -23,7 +23,7 @@
       <template v-else v-for="ws in workspaces" :key="ws.name">
         <div class="wksp p-2" @click="invite(ws)">
           <p class="has-text-weight-bold">{{ ws.label }}</p>
-          <p>{{ ws.name }}</p>
+          <p>{{ utils.stripNdnPrefixForDisplay(ws.name) }}</p>
         </div>
       </template>
     </div>
@@ -37,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 
 import QRCode from 'qrcode';
@@ -46,6 +46,7 @@ import ModalComponent from '@/components/ModalComponent.vue';
 
 import { Workspace } from '@/services/workspace';
 import { Toast } from '@/utils/toast';
+import * as utils from '@/utils';
 
 import type { IWkspStats } from '@/services/types';
 
@@ -62,6 +63,7 @@ const router = useRouter();
 const route = useRoute();
 
 const name = ref(String());
+const displayName = computed(() => utils.stripNdnPrefixForDisplay(name.value));
 const joinLink = ref(String());
 const joinLinkQr = ref(String());
 const workspaces = shallowRef([] as IWkspStats[]);
@@ -75,7 +77,7 @@ async function create() {
   workspaces.value = [];
   joinLink.value = String();
 
-  name.value = route.query.invite as string;
+  name.value = utils.restoreNdnPrefixFromDisplay((route.query.invite as string) || String());
   if (!name.value) {
     close();
     return;

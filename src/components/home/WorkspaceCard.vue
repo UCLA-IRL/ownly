@@ -10,7 +10,7 @@
 
         <div class="media-content">
           <p class="title is-4 has-text-weight-semibold">{{ metadata.label }}</p>
-          <p class="subtitle is-6 mt-1">{{ metadata.name }}</p>
+          <p class="subtitle is-6 mt-1">{{ displayName }}</p>
         </div>
 
         <button
@@ -60,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, useTemplateRef } from 'vue';
+import { computed, onMounted, ref, useTemplateRef } from 'vue';
 
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faEllipsisV } from '@fortawesome/free-solid-svg-icons';
@@ -87,6 +87,7 @@ const emit = defineEmits(['open', 'leave']);
 
 const avatar = ref<string>(utils.makeAvatar(props.metadata.name ?? 'wksp', 'shapes'));
 const wkspMenu = useTemplateRef('wkspMenu');
+const displayName = computed(() => utils.stripNdnPrefixForDisplay(props.metadata.name ?? ''));
 
 onMounted(() => {
   try {

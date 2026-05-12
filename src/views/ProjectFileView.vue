@@ -318,7 +318,7 @@ async function create() {
     const wksp = await Workspace.setupOrRedir(router);
     if (!wksp) throw new Error('Workspace not found');
 
-    localViewerName.value = wksp.username ?? '';
+    localViewerName.value = utils.stripNdnPrefixForDisplay(wksp.username ?? '');
 
     let newProj;
 
@@ -579,7 +579,7 @@ function updateViewers() {
   for (const state of awareness.value.getStates().values()) {
     const user = (state as { user?: { name?: string } }).user;
     const name = user?.name?.trim();
-    if (name) names.add(name);
+    if (name) names.add(utils.stripNdnPrefixForDisplay(name));
   }
   viewers.value = Array.from(names.values()).sort((a, b) => {
     if (a === localViewerName.value && b !== localViewerName.value) return -1;
