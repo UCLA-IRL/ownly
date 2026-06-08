@@ -495,12 +495,14 @@ func (a *App) importPeerCerts(blobs [][]byte, opts peerCertImportOpts) ([]identi
 		if existingCerts[nameStr] || existingKeys[keyStr] {
 			// Just in case the cert not marked as published
 			index.ensureGroup(nameStr, groupStr, opts.Published)
+			a.trust.PromoteAnchor(certData, nil)
 			continue
 		}
 
 		if err = a.keychain.InsertCert(certWire); err != nil {
 			continue
 		}
+		a.trust.PromoteAnchor(certData, nil)
 
 		existingCerts[nameStr] = true
 		existingKeys[keyStr] = true
