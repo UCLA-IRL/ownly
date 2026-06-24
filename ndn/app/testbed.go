@@ -169,6 +169,7 @@ func (a *App) verifyTestbedCert(certWire enc.Wire, fetch bool) (ndn.Data, error)
 		Data:              certData,
 		DataSigCov:        certSigCov,
 		UseDataNameFwHint: optional.Some(false), // directly available
+		UseSignatureTime:  optional.Some(true),
 		Fetch: func(name enc.Name, cfg *ndn.InterestConfig, callback ndn.ExpressCallbackFunc) {
 			if !fetch {
 				cfg.Lifetime.Set(1 * time.Millisecond) // no block
