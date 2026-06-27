@@ -23,6 +23,7 @@ var ephemeralIssuer = enc.NewGenericComponent("ephemeral")
 
 const peerIndexKey = "/local/peer-identities"                      // value: peerPublishIndex
 const fastJoinIndexKey = "/local/fast-join-ephemeral-certificates" // value: peerPublishIndex
+const localIdentityPublishIndexKey = "/local/published-local-identity-certificates"
 
 type peerPublishIndex map[string]map[string]bool // cert -> group -> published
 
@@ -702,6 +703,45 @@ func (a *App) localTrustAnchorCertNames() []string {
 	return out
 }
 
+func (a *App) peerTrustAnchorCertNames() []string {
+	out := make([]string, 0)
+	seen := make(map[string]struct{})
+	for name := range a.loadPeerIndex() {
+		certName, err := enc.NameFromStr(name)
+		if err != nil {
+			continue
+		}
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil && len(certName) > 0 {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			continue
+		}
+		certData, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{wire}))
+		if err != nil {
+			continue
+		}
+		if ctype, ok := certData.ContentType().Get(); !ok || ctype != ndn.ContentTypeKey {
+			continue
+		}
+		if security.CertIsExpired(certData) {
+			continue
+		}
+		valid, err := sig.ValidateData(certData, sigCov, certData)
+		if err != nil || !valid {
+			continue
+		}
+		name := certData.Name().String()
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
 func (a *App) promoteIdentityAnchors() error {
 	promote := func(certNameStr string) {
 		certName, err := enc.NameFromStr(certNameStr)
@@ -726,6 +766,9 @@ func (a *App) promoteIdentityAnchors() error {
 	}
 
 	for _, certName := range a.localTrustAnchorCertNames() {
+		promote(certName)
+	}
+	for _, certName := range a.peerTrustAnchorCertNames() {
 		promote(certName)
 	}
 

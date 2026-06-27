@@ -161,6 +161,54 @@ func (a *App) publishPendingBootFastJoinCerts() {
 	}
 }
 
+func (a *App) publishLocalIdentityCertsToBoot() {
+	if a.bootSyncSession == nil || a.bootSyncSession.alo == nil {
+		return
+	}
+
+	entries, err := a.localIdentityEntries()
+	if err != nil {
+		log.Warn(a, "Failed to list local identity entries for boot publish", "err", err)
+		return
+	}
+
+	index := a.loadPublishIndex(localIdentityPublishIndexKey)
+	groupStr := a.bootSyncSession.group.String()
+
+	for _, entry := range entries {
+		if index.publishedInGroup(entry.CertName, groupStr) {
+			continue
+		}
+
+		certName, err := enc.NameFromStr(entry.CertName)
+		if err != nil {
+			continue
+		}
+
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil && len(certName) > 0 {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			continue
+		}
+
+		if _, state, err := a.bootSyncSession.alo.Publish(enc.Wire{wire}); err != nil {
+			log.Error(a, "Failed to publish local identity cert to boot group", "err", err, "name", certName)
+			continue
+		} else {
+			a.PersistBootState(state)
+		}
+
+		index.ensureGroup(entry.CertName, groupStr, true)
+		log.Info(a, "Published local identity cert to boot sync", "name", certName, "group", a.bootSyncSession.group)
+	}
+
+	if err := a.persistPublishIndex(localIdentityPublishIndexKey, index); err != nil {
+		log.Warn(a, "Failed to persist local identity publish index", "err", err, "group", a.bootSyncSession.group)
+	}
+}
+
 func (a *App) handleBootIdentityCert(data ndn.Data, dataWire enc.Wire) {
 	if data == nil || len(data.Name()) < 2 {
 		return
@@ -525,6 +573,7 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 		log.Error(a, "Failed to start boot sync ALO", "err", err, "group", group)
 		return err
 	}
+	a.publishLocalIdentityCertsToBoot()
 	a.publishPendingBootPeers()
 	a.publishPendingBootFastJoinCerts()
 	return nil

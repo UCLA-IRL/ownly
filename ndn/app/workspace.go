@@ -1177,15 +1177,24 @@ func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Sign
 		return nil, nil, fmt.Errorf("No identity signer")
 	}
 	// Prepare identitySigner
-	identityKeylocator := identitySigner.KeyName().Append(enc.NewGenericComponent("identity"))
+	identityKeylocator, err := a.identityCertNameForSigner(identitySigner)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Find identity certificate: %w", err)
+	}
 	identityCtxSigner := sig.WithKeyLocator(identitySigner, identityKeylocator)
 
 	// Generate a trust anchor key
 	rootKeyName := security.MakeKeyName(wkspName)
 	rootSigner, err := sig.KeygenEcc(rootKeyName, elliptic.P256())
+	if err != nil {
+		return nil, nil, fmt.Errorf("Generate root key: %w", err)
+	}
 	rootKeylocator := rootSigner.KeyName().Append(enc.NewGenericComponent("self"))
 	rootCtxSigner := sig.WithKeyLocator(rootSigner, rootKeylocator)
 	rootSecret, err := sig.MarshalSecretToData(rootSigner)
+	if err != nil {
+		return rootSigner, nil, fmt.Errorf("Marshal root secret: %w", err)
+	}
 
 	// Generate a pre trust anchor
 	preAnchorWire, err := security.SignCert(security.SignCertArgs{
@@ -1226,8 +1235,14 @@ func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Sign
 	// Generate owner
 	ownerName := wkspName.Append(enc.NewKeywordComponent("owner"))
 	ownerKeyName := security.MakeKeyName(ownerName)
-	ownerSigner, _ := sig.KeygenEcc(ownerKeyName, elliptic.P256())
-	ownerSecret, _ := sig.MarshalSecretToData(ownerSigner)
+	ownerSigner, err := sig.KeygenEcc(ownerKeyName, elliptic.P256())
+	if err != nil {
+		return rootSigner, nil, fmt.Errorf("Generate owner key: %w", err)
+	}
+	ownerSecret, err := sig.MarshalSecretToData(ownerSigner)
+	if err != nil {
+		return rootSigner, ownerSigner, fmt.Errorf("Marshal owner secret: %w", err)
+	}
 	ownerCertWire, err := security.SignCert(security.SignCertArgs{
 		Data:      ownerSecret,
 		Signer:    rootCtxSigner,
