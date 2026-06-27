@@ -143,11 +143,11 @@ export class Workspace {
         await workspace.republishEncryptedState();
       });
       workspace.registerRefreshHandlers();
-      await api.set_on_refresh_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
+      await api.set_on_refresh_req(workspace.currentDeviceIdentity(), async () => {
         await workspace.republishEncryptedState();
       });
       if (metadata.owner) {
-        await api.set_on_mls_rst_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
+        await api.set_on_mls_rst_req(workspace.currentDeviceIdentity(), async () => {
           if (!invite.isMasterDevice()) {
             throw new Error('Only the master owner device can reset MLS state');
           }

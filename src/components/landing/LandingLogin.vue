@@ -337,7 +337,7 @@ const route = useRoute();
 //     has a testbed key + ID key, we refuse to log in when the ID key's
 //     identity doesn't match.
 const fastJoinBundle = ref<FastJoinBundle | null>(null);
-const fastJoinIdentityMismatch = ref<String | null>(null);
+const fastJoinIdentityMismatch = ref<string | null>(null);
 
 if (typeof window !== 'undefined') {
   fastJoinBundle.value = parseFastJoinBundleFromLocation(
