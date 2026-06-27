@@ -5,6 +5,7 @@ package app
 import (
 	"crypto/cipher"
 	"fmt"
+	"runtime"
 	"syscall/js"
 	"time"
 
@@ -139,6 +140,34 @@ func (a *App) String() string {
 
 func (a *App) JsApi() js.Value {
 	api := map[string]any{
+		// debug_memory(gc?: boolean): Promise<Record<string, number>>;
+		"debug_memory": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			if len(p) > 0 && p[0].Truthy() {
+				runtime.GC()
+			}
+
+			var mem runtime.MemStats
+			runtime.ReadMemStats(&mem)
+
+			return map[string]any{
+				"alloc":         float64(mem.Alloc),
+				"totalAlloc":    float64(mem.TotalAlloc),
+				"sys":           float64(mem.Sys),
+				"heapAlloc":     float64(mem.HeapAlloc),
+				"heapSys":       float64(mem.HeapSys),
+				"heapInuse":     float64(mem.HeapInuse),
+				"heapIdle":      float64(mem.HeapIdle),
+				"heapReleased":  float64(mem.HeapReleased),
+				"stackInuse":    float64(mem.StackInuse),
+				"stackSys":      float64(mem.StackSys),
+				"gcSys":         float64(mem.GCSys),
+				"otherSys":      float64(mem.OtherSys),
+				"numGC":         float64(mem.NumGC),
+				"lastGCPauseNs": float64(mem.PauseNs[(mem.NumGC+255)%256]),
+				"nextGC":        float64(mem.NextGC),
+			}, nil
+		}),
+
 		// has_testbed_key(): Promise<boolean>;
 		"has_testbed_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			key, _ := a.GetTestbedKey()
@@ -250,6 +279,19 @@ func (a *App) JsApi() js.Value {
 		// import_identity_key(secret: Uint8Array): Promise<any>;
 		"import_identity_key": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
 			entry, err := a.importIdentityKey(jsutil.JsArrayToSlice(p[0]))
+			if err != nil {
+				return nil, err
+			}
+			return entry.toJs(), nil
+		}),
+
+		// import_fast_join_identity(secret: Uint8Array, cert: Uint8Array, ownerCert: Uint8Array): Promise<any>;
+		"import_fast_join_identity": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			entry, err := a.importFastJoinIdentity(
+				jsutil.JsArrayToSlice(p[0]),
+				jsutil.JsArrayToSlice(p[1]),
+				jsutil.JsArrayToSlice(p[2]),
+			)
 			if err != nil {
 				return nil, err
 			}

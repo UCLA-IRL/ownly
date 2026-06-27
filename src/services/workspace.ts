@@ -23,6 +23,8 @@ import type { IWkspStats } from '@/services/types';
 declare global {
   // eslint-disable-next-line no-var
   var ActiveWorkspace: Workspace | null;
+  // eslint-disable-next-line no-var
+  var ActiveWorkspaceSetup: { name: string; promise: Promise<Workspace> } | null;
 }
 
 /**
@@ -75,7 +77,10 @@ export class Workspace {
     let api: WorkspaceAPI | null = null;
     try {
 
-      api = await ndn.api.get_workspace(metadata.name, metadata.ignore);
+      api = await ndn.api.get_workspace(
+        metadata.name,
+        metadata.ignore,
+      );
       await api.start();
 
       // Wait until user key is ready before proceeding; toast follows route changes.
@@ -139,12 +144,10 @@ export class Workspace {
       });
       workspace.registerRefreshHandlers();
       await api.set_on_refresh_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
-        console.log('received directed refresh request', { requestId, requester });
         await workspace.republishEncryptedState();
       });
       if (metadata.owner) {
         await api.set_on_mls_rst_req(workspace.currentDeviceIdentity(), async (requestId, requester) => {
-          console.log('received directed MLS reset request', { requestId, requester });
           if (!invite.isMasterDevice()) {
             throw new Error('Only the master owner device can reset MLS state');
           }
@@ -280,11 +283,6 @@ export class Workspace {
         sawResponder = true;
         for (const responder of responders) {
           attemptedResponders.add(responder.responder);
-          console.log('trying SOS responder', {
-            request_id: requestId,
-            requester: this.currentDeviceIdentity(),
-            responder: responder.responder,
-          });
 
           try {
             const status = await this.requestRefresh(requestId, responder.responder);
@@ -415,22 +413,6 @@ export class Workspace {
   public async republishEncryptedState(): Promise<void> {
     await this.provider.republishEncryptedState();
     await this.proj.republishEncryptedState();
-    console.log('finished workspace encrypted-state republish', {
-      workspace: this.metadata.name,
-      responder: this.currentDeviceIdentity(),
-    });
-  }
-
-  /**
-   * Manually force a fresh encrypted-state republish for the workspace.
-   * This is intended as an owner-operated recovery action when clients appear
-   * to be stuck on stale encrypted history/snapshots.
-   */
-  public async forceSnapshotUpdate(): Promise<void> {
-    if (!this.metadata.owner) {
-      throw new Error('Only the workspace owner can force a snapshot update');
-    }
-    await this.republishEncryptedState();
   }
 
   /**
@@ -460,17 +442,40 @@ export class Workspace {
     _o.stats.put(space, metadata); // background
 
     // Start workspace if not already active
-    if (globalThis.ActiveWorkspace?.metadata.name !== metadata.name) {
-      try {
-        await globalThis.ActiveWorkspace?.destroy();
-      } catch (e) {
-        console.error(e);
-        GlobalBus.emit('wksp-error', new Error(`Failed to stop workspace: ${e}`));
-      }
-      globalThis.ActiveWorkspace = await Workspace.create(metadata);
+    if (globalThis.ActiveWorkspace?.metadata.name === metadata.name) {
+      return globalThis.ActiveWorkspace;
     }
 
-    return globalThis.ActiveWorkspace;
+    const pendingSetup = globalThis.ActiveWorkspaceSetup;
+    if (pendingSetup) {
+      const pendingWorkspace = await pendingSetup.promise.catch(() => null);
+      if (pendingWorkspace?.metadata.name === metadata.name) {
+        return pendingWorkspace;
+      }
+    }
+
+    try {
+      await globalThis.ActiveWorkspace?.destroy();
+    } catch (e) {
+      console.error(e);
+      GlobalBus.emit('wksp-error', new Error(`Failed to stop workspace: ${e}`));
+    }
+
+    const setup = {
+      name: metadata.name,
+      promise: Workspace.create(metadata).then((workspace) => {
+        globalThis.ActiveWorkspace = workspace;
+        return workspace;
+      }),
+    };
+    globalThis.ActiveWorkspaceSetup = setup;
+    try {
+      return await setup.promise;
+    } finally {
+      if (globalThis.ActiveWorkspaceSetup === setup) {
+        globalThis.ActiveWorkspaceSetup = null;
+      }
+    }
   }
 
   /**

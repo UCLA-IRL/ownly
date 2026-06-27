@@ -8,6 +8,10 @@ import type { IOwnerDeviceRecord, IProfile, IWkspStats } from '@/services/types'
 import  { OpenMlsLiteClient, OpenMlsLiteGroup } from '@/services/openmls-lite';
 import { accountIdentityPrefix, encodeMlsIdentity, parseMlsIdentity } from '@/services/mls-identity';
 import { GlobalBus } from '@/services/event-bus';
+import {
+  serializeFastJoinBundle,
+  type FastJoinInvitation,
+} from '@/services/fast-join';
 
 const MLS_STORAGE_STATE_KEY = 'mls/storage/v1';
 const MLS_GROUP_ID_STATE_KEY = 'mls/group-id/v1';
@@ -97,10 +101,6 @@ export class WorkspaceInviteManager {
     return trimmed ? trimmed : undefined;
   }
 
-  private defaultOwnerDeviceLabel(deviceId: string): string {
-    return `Device ${deviceId.slice(0, 8)}`;
-  }
-
   private localOwnerDeviceRecord(now = Date.now()): IOwnerDeviceRecord {
     if (!this.wsmeta.owner || !this.wsmeta.deviceId) {
       throw new Error('Local device is not an owner device');
@@ -110,7 +110,7 @@ export class WorkspaceInviteManager {
     return {
       deviceId: this.wsmeta.deviceId,
       ownerId: this.api.name,
-      label: existing?.label?.trim() || this.defaultOwnerDeviceLabel(this.wsmeta.deviceId),
+      label: existing?.label?.trim() || `Device ${this.wsmeta.deviceId.slice(0, 8)}`,
       registeredAt: existing?.registeredAt ?? now,
     };
   }
@@ -170,6 +170,17 @@ export class WorkspaceInviteManager {
       this.sharedMasterDeviceId() === this.wsmeta.deviceId;
   }
 
+  private async deletePeerIdentityEntries(identity: string): Promise<void> {
+    const target = identity.trim();
+    if (!target) return;
+
+    try {
+      await this.api.forget_peer_identity(target);
+    } catch (err) {
+      console.warn(`Failed to clean peer identity entries for ${target}`, err);
+    }
+  }
+
   public getMasterOwnerDevice(): IOwnerDeviceRecord | undefined {
     const masterDeviceId = this.sharedMasterDeviceId();
     return masterDeviceId ? this.ownerDevices.get(masterDeviceId) : undefined;
@@ -194,7 +205,7 @@ export class WorkspaceInviteManager {
     const trimmedLabel = label.trim();
     this.ownerDevices.set(deviceId, {
       ...existing,
-      label: trimmedLabel || this.defaultOwnerDeviceLabel(deviceId),
+      label: trimmedLabel || `Device ${deviceId.slice(0, 8)}`,
     });
   }
 
@@ -247,12 +258,6 @@ export class WorkspaceInviteManager {
       a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
     );
     return out;
-  }
-
-  private orderedPendingCommits(): MlsRefPub[] {
-    return [...this.pendingCommitRefs].sort((a, b) =>
-      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
-    );
   }
 
   /**
@@ -375,10 +380,6 @@ export class WorkspaceInviteManager {
     return !!state && state.byteLength > 0;
   }
 
-  private isResetPub(pub: MlsRefPub): boolean {
-    return pub.invitee === MLS_RESET_SENTINEL;
-  }
-
   private async restoreLegacyWorkspaceKey(): Promise<void> {
     if (!this.wsmeta.psk || !this.wsmeta.dsk) {
       throw new Error('Cannot reset MLS state without legacy PSK+DSK fallback');
@@ -477,7 +478,9 @@ export class WorkspaceInviteManager {
   private async drainPendingCommitRefs(): Promise<void> {
     if (!this.mlsGroup || this.pendingCommitRefs.length === 0) return;
 
-    const pending = this.orderedPendingCommits();
+    const pending = [...this.pendingCommitRefs].sort((a, b) =>
+      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
+    );
     const stillPending: MlsRefPub[] = [];
 
     for (const pub of pending) {
@@ -572,7 +575,6 @@ export class WorkspaceInviteManager {
     }
 
     for (const pub of this.uniqueOrdered(pubs)) {
-      console.log(`Processing MLS KP ref from ${pub.invitee}`);
       const kp = (await this.provider.consumeBlob(pub.blob_name)).data;
       let inviteeIdentity: string;
       let commit: Uint8Array;
@@ -599,7 +601,6 @@ export class WorkspaceInviteManager {
     const currentIdentity = this.currentMlsIdentity();
     for (const pub of this.uniqueOrdered(pubs)) {
       if (pub.invitee !== currentIdentity) continue;
-      console.log('Processing MLS welcome ref', pub);
       const welcome = (await this.provider.consumeBlob(pub.blob_name)).data;
       await this.joinMlsFromWelcome(welcome, pub.session_id);
     }
@@ -607,7 +608,7 @@ export class WorkspaceInviteManager {
 
   private async onMlsCommitRefs(pubs: MlsRefPub[]): Promise<void> {
     for (const pub of this.uniqueOrdered(pubs)) {
-      if (this.isResetPub(pub)) {
+      if (pub.invitee === MLS_RESET_SENTINEL) {
         if (this.wsmeta.owner && this.isMasterDevice()) continue;
         await this.resetLocalMlsState(`remote group reset from ${pub.publisher}`);
         continue;
@@ -650,7 +651,6 @@ export class WorkspaceInviteManager {
     const kp = client.keyPackage();
     const identity = this.currentMlsIdentity();
     const inviteeKey = utils.escapeUrlName(identity);
-    console.log('Publishing MLS key package ref', { invitee: `mls-kp-${inviteeKey}`, blobSize: kp.byteLength });
     const blob = await this.provider.publishBlob(`mls-kp-${inviteeKey}`, kp);
     await this.provider.svs.pub_mls_kp_ref(identity, blob, MLS_PREJOIN_SESSION_ID);
   }
@@ -717,10 +717,23 @@ export class WorkspaceInviteManager {
     this.assertOwnerCanMergeMls('remove members');
     if (!name) throw new Error('Missing member name');
 
-    const group = await this.getMlsGroup();
+    const wasAuthorized = this.inviteeProfiles.has(name);
+    const group = this.mlsGroup;
+    if (!group) {
+      if (!wasAuthorized) throw new Error(`Member ${name} not found`);
+      this.inviteeProfiles.delete(name);
+      await this.deletePeerIdentityEntries(name);
+      return;
+    }
+
     const encoder = new TextEncoder();
     const indexes = group.memberIndexesByIdentityPrefix(encoder.encode(accountIdentityPrefix(name)));
-    if (!indexes.length) throw new Error(`Member ${name} not found in MLS group`);
+    if (!indexes.length) {
+      if (!wasAuthorized) throw new Error(`Member ${name} not found`);
+      this.inviteeProfiles.delete(name);
+      await this.deletePeerIdentityEntries(name);
+      return;
+    }
     if (indexes.includes(group.myIndex())) throw new Error('Refusing to remove self in this flow');
 
     const { commit } = group.removeMembers(indexes);
@@ -738,6 +751,7 @@ export class WorkspaceInviteManager {
 
     // remove from authorization map
     this.inviteeProfiles.delete(name);
+    await this.deletePeerIdentityEntries(name);
     await this.notifyOwnerSessionAdvanced(sessionId);
   }
 
@@ -807,6 +821,40 @@ export class WorkspaceInviteManager {
     await this.invite(invitee.name);
   }
 
+  public async tryFastInvite(invitee: IProfile, router: Router): Promise<string> {
+    if (!this.wsmeta.owner) throw new Error('Only owner can invite');
+
+    await this.bootstrapOwnerMls();
+
+    if (this.inviteeProfiles.has(invitee.name)) {
+      throw new Error(`Invitation for ${invitee.name} already exists`);
+    }
+
+    this.inviteeProfiles.set(invitee.name, invitee);
+    try {
+      const invitation = await this.api.make_fast_join_invitation(invitee.name);
+      return this.getFastJoinLink(router, invitation);
+    } catch (err) {
+      this.inviteeProfiles.delete(invitee.name);
+      throw err;
+    }
+  }
+
+  /**
+   * Regenerate the fast-join link for an existing invitee (pending or
+   * already-joined member). The owner can use this to resend a lost link
+   * or rotate a member's ephemeral cert. The old cert is cleaned up by
+   * the Go side via forgetFastJoinCertForGroup.
+   */
+  public async resendFastInvite(inviteeName: string, router: Router): Promise<string> {
+    if (!this.wsmeta.owner) throw new Error('Only owner can resend');
+
+    await this.bootstrapOwnerMls();
+
+    const invitation = await this.api.make_fast_join_invitation(inviteeName);
+    return this.getFastJoinLink(router, invitation);
+  }
+
   /**
    * Try to invite an agent to the workspace
    *
@@ -838,8 +886,6 @@ export class WorkspaceInviteManager {
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status} ${response.statusText}`);
       }
-
-      console.log(`Agent invite sent successfully to ${inviteUrl}`);
     } catch (err) {
       console.error(`Failed to send agent invite to ${inviteUrl}:`, err);
       throw err; // rethrow so UI can display Toast error
@@ -866,14 +912,40 @@ export class WorkspaceInviteManager {
    * @param router Vue router instance
    */
   public async getJoinLink(router: Router) {
-    const space = utils.escapeUrlName(this.wsmeta.name);
-    const inviteHref = router.resolve({
-      name: 'join',
-      params: { space },
+    return this.buildJoinHref(router, {
       query: {
         label: this.wsmeta.label,
         psk: this.wsmeta.psk,
       },
+    });
+  }
+
+  public getFastJoinLink(router: Router, invitation: FastJoinInvitation) {
+    const fastJoin = serializeFastJoinBundle({
+      v: 5,
+      label: this.wsmeta.label,
+      wksp: this.wsmeta.name,
+      psk: this.wsmeta.psk,
+      inviteeIdentity: invitation.invitee_identity,
+      ownerCert: invitation.owner_cert,
+      ephemeralSecret: invitation.ephemeral_secret,
+      ephemeralCert: invitation.ephemeral_cert,
+    });
+    return this.buildJoinHref(router, {
+      hash: `#fj=${fastJoin}`,
+    });
+  }
+
+  private buildJoinHref(
+    router: Router,
+    opts: { query?: Record<string, string>; hash?: string },
+  ): string {
+    const space = utils.escapeUrlName(this.wsmeta.name);
+    const inviteHref = router.resolve({
+      name: 'join',
+      params: { space },
+      ...(opts.query ? { query: opts.query } : {}),
+      ...(opts.hash ? { hash: opts.hash } : {}),
     }).href;
     return `${window.location.origin}${inviteHref}`;
   }

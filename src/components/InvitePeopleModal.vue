@@ -3,14 +3,26 @@
     <div class="title is-5 mb-4">Invite people to {{ wksp?.metadata.label }}</div>
 
     <p>
-      An invitation will be generated for each email address. Note that Ownly does not automatically
-      send any emails &ndash; you must ask the recipients to join the workspace using the email
-      address listed below using the invite link.
+      A fast join link will be generated for each recipient. Note that Ownly does not automatically
+      send any emails &ndash; you must send each generated link directly to its recipient.
     </p>
 
-    <p class="mt-1">
-      <code class="select-all link">{{ inviteLink }}</code>
-    </p>
+    <div class="fast-invite-links mt-3">
+      <div class="title is-6 mb-2">Generated invite links</div>
+      <template v-if="fastInviteLinks.length > 0">
+        <div class="fast-invite-link" v-for="link in fastInviteLinks" :key="link.name">
+          <div class="fast-invite-recipient">
+            <strong>{{ link.email || link.name }}</strong>
+            <span v-if="link.email">{{ link.name }}</span>
+          </div>
+          <code class="select-all">{{ link.href }}</code>
+          <button class="button invitee-list-action" @click="copyFastInviteLink(link)" title="Copy invite link">
+            <FontAwesomeIcon :icon="faCopy" />
+          </button>
+        </div>
+      </template>
+      <p v-else class="invite-link-empty">No generated links yet.</p>
+    </div>
 
     <p class="mt-2">Enter an email address or NDN name below</p>
 
@@ -23,7 +35,7 @@
       <div class="title is-6 mb-4" v-if="pendingRequests.length > 0">
         Access Requests ({{ pendingRequests.length }})
       </div>
-      <DynamicScroller class="scroller" ref="scroller" :items="pendingRequests" :min-item-size="10" key-field="name">
+      <DynamicScroller class="scroller" :items="pendingRequests" :min-item-size="10" key-field="name">
         <template #default="{ item, index, active }">
           <DynamicScrollerItem :item="item" :active="active" :data-index="index" class="invitee-profile">
             <div :class="{
@@ -68,7 +80,7 @@
           <FontAwesomeIcon :icon="faCopy" />
         </button>
       </div>
-      <DynamicScroller class="scroller" ref="scroller" :items="allInvitees" :min-item-size="10" key-field="name">
+      <DynamicScroller class="scroller" :items="allInvitees" :min-item-size="10" key-field="name">
         <template #default="{ item, index, active }">
           <DynamicScrollerItem :item="item" :active="active" :data-index="index" class="invitee-profile">
             <div :class="{
@@ -97,20 +109,22 @@
                   Owner
                 </div>
                 <div class="badge" v-else>
-                  Member
+                  Access
                 </div>
 
+                <button class="button invitee-list-action" v-if="canManageMembers && !item.owner"
+                  :disabled="resendingInvite === item.name"
+                  @click="resendInvite(item.name)" title="Generate a new fast-join link for this person">
+                  <FontAwesomeIcon :icon="faShare" />
+                </button>
                 <button class="button invitee-list-action" v-if="item.pending"
                   @click="removeInvitee(item.name)" title="Remove this pending invitee">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
                 <button class="button invitee-list-action" v-else-if="canManageMembers && !item.owner"
                   :disabled="removingMember === item.name"
-                  @click="removeExistingMember(item.name)" title="Remove this member from the workspace">
+                  @click="removeExistingMember(item.name)" title="Remove access to this workspace">
                   <FontAwesomeIcon :icon="faUserMinus" />
-                </button>
-                <button class="button invitee-list-action" v-else @click="() => { /*TODO: menu*/ }" title="Menu" disabled="true">
-                  <FontAwesomeIcon :icon="faBars" />
                 </button>
               </div>
             </div>
@@ -143,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, shallowRef, useTemplateRef, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
@@ -154,7 +168,7 @@ import { Workspace } from '@/services/workspace';
 import { Toast } from '@/utils/toast';
 import type { IProfile } from '@/services/types';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
-import { faBars, faCheck, faClipboard, faCopy, faUserMinus, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faClipboard, faCopy, faShare, faUserMinus, faXmark } from '@fortawesome/free-solid-svg-icons';
 
 const props = defineProps({
   show: {
@@ -165,11 +179,7 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 const router = useRouter();
 
-// Element references
-const scroller = useTemplateRef<typeof DynamicScroller>('scroller');
-
 const wksp = shallowRef<Workspace | null>(null);
-const inviteLink = ref(String());
 const inviteInput = ref(String())
 const canManageMembers = computed(() =>
   !!wksp.value?.metadata.owner && !!wksp.value?.invite.isMasterDevice(),
@@ -179,6 +189,9 @@ const invitees = ref([] as IProfile[]);
 const pendingInvitees = ref([] as IProfile[]);
 const pendingRequests = ref([] as IProfile[]);
 const removingMember = ref<string | null>(null);
+const fastInviteLinks = ref([] as { name: string; email?: string; href: string }[]);
+
+const MAX_BATCH = 100;
 
 const allInvitees = computed(() => {
   return [
@@ -214,12 +227,11 @@ watch(
     invitees.value = wksp.value.invite.getInviteArray();
     pendingInvitees.value.length = 0; // clear pending invitees
     pendingRequests.value.length = 0;
+    fastInviteLinks.value = [];
     _access_requests.forEach((requester) => {
       if (wksp.value?.metadata.name == requester[0] && !requester[2]) // requester[2] is false if request has not been dealt with yet
         addRequest(requester[1]);
     })
-
-    inviteLink.value = await wksp.value.invite.getJoinLink(router);
     members.value = await wksp.value.getMembers();
   },
 );
@@ -239,11 +251,42 @@ async function copyInviteeList() {
   Toast.success(`Copied ${allInvitees.value.length} users to clipboard!`);
 }
 
+async function copyFastInviteLink(link: { name: string; email?: string; href: string }) {
+  await navigator.clipboard.writeText(link.href);
+  Toast.success(`Copied invite link for ${link.email || link.name}`);
+}
+
+const resendingInvite = ref<string | null>(null);
+
+async function resendInvite(name: string) {
+  if (!wksp.value) return;
+  if (resendingInvite.value) return;
+  resendingInvite.value = name;
+  try {
+    const href = await wksp.value.invite.resendFastInvite(name, router);
+    await navigator.clipboard.writeText(href);
+    Toast.success(`New fast-join link for ${name} copied to clipboard`);
+  } catch (err: any) {
+    Toast.error(`Failed to resend invite for ${name}: ${err?.message || err}`);
+  } finally {
+    resendingInvite.value = null;
+  }
+}
+
 // Paste invitee list from clipboard, overwriting existing pending invitees
 async function pasteInviteeList() {
   const clipboardText = await navigator.clipboard.readText();
   addInvitees(clipboardText);
   Toast.success(`Added ${pendingInvitees.value.length} users to invitation list`);
+}
+
+// Mark an access request as handled in the global list, and remove it from the local pending list
+function markRequestHandled(name: string) {
+  const idx = _access_requests.findIndex(
+    a => a[0] == wksp.value?.metadata.name && a[1] == name,
+  )
+  if (idx != -1) _access_requests[idx][2] = true
+  pendingRequests.value = pendingRequests.value.filter(a => a.name != name)
 }
 
 // Remove an invitee from the pending list
@@ -260,18 +303,18 @@ async function removeExistingMember(name: string) {
     Toast.error('Only the master owner device can remove members');
     return;
   }
-  if (!globalThis.confirm(`Remove ${name} from this workspace?`)) return;
+  if (!globalThis.confirm(`Remove workspace access for ${name}?`)) return;
   if (removingMember.value) return;
 
   removingMember.value = name;
-  const progress = Toast.loading(`Removing ${name} from workspace...`);
+  const progress = Toast.loading(`Removing access for ${name}...`);
   try {
     await wksp.value.invite.removeMember(name);
     invitees.value = invitees.value.filter((profile) => profile.name !== name);
     members.value = await wksp.value.getMembers();
-    await progress.success(`Removed ${name} from workspace`);
+    await progress.success(`Removed access for ${name}`);
   } catch (err) {
-    await progress.error(`Failed to remove ${name}: ${err}`);
+    await progress.error(`Failed to remove access for ${name}: ${err}`);
   } finally {
     removingMember.value = null;
   }
@@ -297,7 +340,7 @@ function addInvitees(input: string) {
 // Add an invitee to the pending list
 function addInvitee(invitee: string) {
   // Check maximum invitees per invitation
-  if (pendingInvitees.value.length >= 100) {
+  if (pendingInvitees.value.length >= MAX_BATCH) {
     Toast.error("Maximum of 100 invitees allowed in one time")
     return;
   }
@@ -339,7 +382,7 @@ function addInvitee(invitee: string) {
 // Add an access request to the pending list
 function addRequest(invitee: string) {
   // Check maximum invitees per invitation
-  if (pendingRequests.value.length >= 100) {
+  if (pendingRequests.value.length >= MAX_BATCH) {
     Toast.error("Maximum of 100 requests allowed in one time")
     return;
   }
@@ -370,25 +413,15 @@ function addRequest(invitee: string) {
 
   // Check if already invited/pending
   if (allInvitees.value.some((profile) => profile.name === new_profile.name)) {
-    console.log("Received access request from already added member");
-
     // Remove from local list to prevent accidental duplicates, and mark in global list as already dealt with
-    const idx = _access_requests.findIndex(a => a[0] == wksp.value?.metadata.name && a[1] == new_profile.name)
-    if (idx != -1)
-      _access_requests[idx][2] = true
-    pendingRequests.value = pendingRequests.value.filter(a => a.name != new_profile.name)
+    markRequestHandled(new_profile.name);
     return;
   }
 
   // Check for repetition
   if (pendingRequests.value.some((profile) => profile.name === new_profile.name)) {
-    console.log("Received duplicate access request");
-
     // Remove from local list to prevent accidental duplicates, and mark in global list as already dealt with
-    const idx = _access_requests.findIndex(a => a[0] == wksp.value?.metadata.name && a[1] == new_profile.name)
-    if (idx != -1)
-      _access_requests[idx][2] = true
-    pendingRequests.value = pendingRequests.value.filter(a => a.name != new_profile.name)
+    markRequestHandled(new_profile.name);
     return;
   }
 
@@ -397,7 +430,6 @@ function addRequest(invitee: string) {
 }
 
 async function acceptRequest(invitee: IProfile) {
-  console.log(invitee);
   if (!wksp.value) return;
   if (!canManageMembers.value) {
     Toast.error('Only the master owner device can invite members');
@@ -405,11 +437,7 @@ async function acceptRequest(invitee: IProfile) {
   }
 
   // Remove from local list to prevent accidental duplicates, and mark in global list as already dealt with
-  console.log(_access_requests)
-  const idx = _access_requests.findIndex(a => a[0] == wksp.value?.metadata.name && a[1] == invitee.name)
-  if (idx != -1)
-    _access_requests[idx][2] = true
-  pendingRequests.value = pendingRequests.value.filter(a => a.name != invitee.name)
+  markRequestHandled(invitee.name);
 
   // Publish invitation
   try {
@@ -434,11 +462,7 @@ function denyRequest(invitee: IProfile) {
   }
 
   // Remove from local list to prevent accidental duplicates, and mark in global list as already dealt with
-  console.log(_access_requests)
-  const idx = _access_requests.findIndex(a => a[0] == wksp.value?.metadata.name && a[1] == invitee.name)
-  if (idx != -1)
-    _access_requests[idx][2] = true
-  pendingRequests.value = pendingRequests.value.filter(a => a.name != invitee.name)
+  markRequestHandled(invitee.name);
 }
 
 // Sign the invitations and send them to the server
@@ -449,20 +473,31 @@ async function send() {
     return;
   }
 
-  // Publish invitations
+  const generatedLinks: { name: string; email?: string; href: string }[] = [];
+
+  // Publish invitations and create per-invitee fast join links.
   for (const invitee of pendingInvitees.value) {
     try {
-      // Generate and publish invitation to sync
-      await wksp.value.invite.tryInvite(invitee);
+      const href = await wksp.value.invite.tryFastInvite(invitee, router);
+      generatedLinks.push({ name: invitee.name, email: invitee.email, href });
+      invitees.value.push(invitee);
     } catch (err) {
       Toast.error(`Failed to invite ${invitee.name}: ${err}`);
       return; // rare
     }
   }
 
-  // Finish
-  Toast.success(`Invited ${pendingInvitees.value.length} users to workspace!`);
-  emit('close');
+  fastInviteLinks.value = generatedLinks;
+  pendingInvitees.value = [];
+
+  try {
+    await navigator.clipboard.writeText(
+      generatedLinks.map((link) => `${link.email || link.name}: ${link.href}`).join('\n'),
+    );
+    Toast.success(`Generated ${generatedLinks.length} invite links and copied them to clipboard!`);
+  } catch {
+    Toast.success(`Generated ${generatedLinks.length} invite links!`);
+  }
 }
 
 </script>
@@ -540,6 +575,49 @@ async function send() {
         }
       }
     }
+  }
+}
+
+.fast-invite-links {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+
+  .fast-invite-link {
+    display: grid;
+    grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr) 2rem;
+    gap: 0.5rem;
+    align-items: center;
+
+    code {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .fast-invite-recipient {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.25;
+
+    strong,
+    span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    span {
+      color: var(--bulma-text-weak);
+      font-size: 0.8rem;
+    }
+  }
+
+  .invite-link-empty {
+    color: var(--bulma-text-weak);
+    margin-bottom: 0;
   }
 }
 </style>

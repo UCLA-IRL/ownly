@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { StoreDexie, type StoreJS } from '@/services/database/store_js';
 import { KeyChainDexie, type KeyChainJS } from '@/services/database/keychain_js';
 import { GlobalBus } from '@/services/event-bus';
+import type { FastJoinInvitation } from '@/services/fast-join';
 
 /* eslint-disable no-var */
 declare global {
@@ -19,6 +20,7 @@ declare global {
 
   var set_ndn: undefined | ((ndn: NDNAPI) => void);
   var ndn_api: NDNAPI;
+  var ownly_ndn_setup: Promise<NDNAPI> | undefined;
 }
 /* eslint-enable no-var */
 
@@ -39,6 +41,12 @@ interface NDNAPI {
   generate_identity_key(): Promise<IdentityKeyInfo>;
   /** Import an existing identity key pair (MarshalSecret format) */
   import_identity_key(secret: Uint8Array): Promise<IdentityKeyInfo>;
+  /** Import the ephemeral identity carried by a fast-join link */
+  import_fast_join_identity(
+    secret: Uint8Array,
+    cert: Uint8Array,
+    ownerCert: Uint8Array,
+  ): Promise<IdentityKeyInfo>;
   /** Import peer self-signed certificates */
   import_peer_certs(blobs: Uint8Array[]): Promise<IdentityKeyInfo[]>;
   /** Delete a managed identity or peer entry */
@@ -64,7 +72,11 @@ interface NDNAPI {
   ): Promise<void>;
 
   /** Join Workspace (generate keys etc.) */
-  join_workspace(wksp: string, create: boolean, payload: Uint8Array | null): Promise<string>;
+  join_workspace(
+    wksp: string,
+    create: boolean,
+    payload: Uint8Array | null,
+  ): Promise<string>;
   /** Check if the user has owner permissions on the workspace */
   is_workspace_owner(wksp: string): Promise<boolean>;
 
@@ -137,6 +149,10 @@ export interface WorkspaceAPI {
 
   /** Sign and publish an invitation for a given NDN name */
   sign_and_pub_invitation(invitee: string): Promise<Uint8Array>;
+  /** Remove workspace-scoped peer identity state for an invitee */
+  forget_peer_identity(invitee: string): Promise<void>;
+  /** Create a self-contained fast-join invitation for a given NDN name */
+  make_fast_join_invitation(invitee: string): Promise<FastJoinInvitation>;
 
   /** Wait for DSK to appear for the given key */
   wait_for_dsk(key: Uint8Array): Promise<Uint8Array>;
@@ -247,14 +263,43 @@ class NDNService {
 
   async setup() {
     if (this.api) return;
+    if (globalThis.ndn_api) {
+      this.api = globalThis.ndn_api;
+      await this.registerCallbacks();
+      return;
+    }
 
+    globalThis.ownly_ndn_setup ??= this.initBackend().catch((err) => {
+      globalThis.ownly_ndn_setup = undefined;
+      throw err;
+    });
+    this.api = await globalThis.ownly_ndn_setup;
+    globalThis.ownly_ndn_setup = undefined;
+    await this.registerCallbacks();
+  }
+
+  private async initBackend(): Promise<NDNAPI> {
     // Provide JS APIs
     globalThis._ndnd_store_js = new StoreDexie('store');
-    globalThis._ndnd_keychain_js = new KeyChainDexie();
+    const keychainShim = new KeyChainDexie();
+    globalThis._ndnd_keychain_js = keychainShim;
     globalThis._yjs_merge_updates = Y.mergeUpdatesV2;
     globalThis._ndnd_conn_change_js = _ndnd_conn_change_js;
     globalThis._ndnd_conn_state = { connected: false, router: String() };
     globalThis._access_requests = new Array<[string,string,boolean]>();
+
+    // Run the keychain auto-purge BEFORE handing the shim to upstream
+    // keychain.NewKeyChainJS. That constructor immediately calls list()
+    // and re-inserts every persisted file via InsertFile. On a polluted
+    // profile (hundreds of thousands of duplicate .key rows from the
+    // upstream KeyChainJS.InsertKey write-on-dedup-hit bug) this would
+    // take so long that the JS set_ndn promise times out with "NDN API
+    // not set" and the backend never finishes initializing.
+    try {
+      await keychainShim.preWasmInit();
+    } catch (err) {
+      console.error('Keychain pre-WASM purge failed; continuing with whatever is in the IDB', err);
+    }
 
     // Load the Go WASM module
     const go = new Go();
@@ -286,8 +331,10 @@ class NDNService {
         new Error('WASM backend crashed. Check JS console for logs and refresh the page.'),
       );
     });
-    this.api = await ndnPromise;
+    return await ndnPromise;
+  }
 
+  private async registerCallbacks() {
     const bootState = globalThis._o?.bootState;
     if (bootState && typeof this.api.load_boot_state === 'function') {
       try {
@@ -332,6 +379,7 @@ class NDNService {
       }
     }
   }
+
 }
 
 function _ndnd_conn_change_js(connected: boolean, router: string) {
