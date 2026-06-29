@@ -1643,6 +1643,11 @@ func (encoder *BootJoinEncoder) Init(value *BootJoin) {
 		l += uint(enc.TLNum(len(value.AppPayload)).EncodingLength())
 		l += uint(len(value.AppPayload))
 	}
+	if value.InviteeIdCert != nil {
+		l += 3
+		l += uint(enc.TLNum(len(value.InviteeIdCert)).EncodingLength())
+		l += uint(len(value.InviteeIdCert))
+	}
 	encoder.Length = l
 
 }
@@ -1671,6 +1676,14 @@ func (encoder *BootJoinEncoder) EncodeInto(value *BootJoin, buf []byte) {
 		copy(buf[pos:], value.AppPayload)
 		pos += uint(len(value.AppPayload))
 	}
+	if value.InviteeIdCert != nil {
+		buf[pos] = 253
+		binary.BigEndian.PutUint16(buf[pos+1:], uint16(1412))
+		pos += 3
+		pos += uint(enc.TLNum(len(value.InviteeIdCert)).EncodeInto(buf[pos:]))
+		copy(buf[pos:], value.InviteeIdCert)
+		pos += uint(len(value.InviteeIdCert))
+	}
 }
 
 func (encoder *BootJoinEncoder) Encode(value *BootJoin) enc.Wire {
@@ -1687,6 +1700,7 @@ func (context *BootJoinParsingContext) Parse(reader enc.WireView, ignoreCritical
 
 	var handled_PreCertFullName bool = false
 	var handled_AppPayload bool = false
+	var handled_InviteeIdCert bool = false
 
 	progress := -1
 	_ = progress
@@ -1727,6 +1741,13 @@ func (context *BootJoinParsingContext) Parse(reader enc.WireView, ignoreCritical
 					value.AppPayload = make([]byte, l)
 					_, err = reader.ReadFull(value.AppPayload)
 				}
+			case 1412:
+				if true {
+					handled = true
+					handled_InviteeIdCert = true
+					value.InviteeIdCert = make([]byte, l)
+					_, err = reader.ReadFull(value.InviteeIdCert)
+				}
 			default:
 				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
 					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
@@ -1750,6 +1771,9 @@ func (context *BootJoinParsingContext) Parse(reader enc.WireView, ignoreCritical
 	}
 	if !handled_AppPayload && err == nil {
 		value.AppPayload = nil
+	}
+	if !handled_InviteeIdCert && err == nil {
+		value.InviteeIdCert = nil
 	}
 
 	if err != nil {

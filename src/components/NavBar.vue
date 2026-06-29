@@ -98,7 +98,7 @@
 
         <p class="menu-label">Discussion</p>
         <ul class="menu-list">
-          <li v-for="chan in chatChannels" :key="chan.uuid">
+          <li v-for="chan in channels" :key="chan.uuid">
             <router-link :to="linkDiscuss(chan)">
               <FontAwesomeIcon class="mr-1" :icon="faHashtag" size="sm" />
               {{ chan.name }}
@@ -242,7 +242,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue';
 import { useRoute } from 'vue-router';
-//import { useRouter } from 'vue-router';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import {
   faLayerGroup,
@@ -271,14 +270,12 @@ import ModalComponent from './ModalComponent.vue';
 
 import { GlobalBus } from '@/services/event-bus';
 import { Toast } from '@/utils/toast';
-//import { Workspace } from '@/services/workspace';
 
 import type { IChatChannel, IOwnerDeviceRecord, IProject, IProjectFile } from '@/services/types';
 import InvitePeopleModal from './InvitePeopleModal.vue';
 import QrModal from './QrModal.vue';
 
 const route = useRoute();
-//const router = useRouter();
 const routeIsDashboard = computed(() =>
   ['dashboard', 'join', 'about'].includes(String(route.name)),
 );
@@ -305,9 +302,6 @@ const transferringMasterDeviceId = ref(null as string | null);
 const projectTree = useTemplateRef<Array<InstanceType<typeof ProjectTree>>>('projectTree');
 
 const channels = ref([] as IChatChannel[]);
-
-// Use channels directly as chatChannels since they're now separate
-const chatChannels = computed(() => channels.value);
 
 const projects = ref([] as IProject[]);
 const activeProjectName = ref(null as string | null);

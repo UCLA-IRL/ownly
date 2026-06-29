@@ -89,6 +89,8 @@ type BootJoin struct {
 	PreCertFullName []byte `tlv:"0x580"`
 	//+field:binary
 	AppPayload []byte `tlv:"0x582"`
+	//+field:binary
+	InviteeIdCert []byte `tlv:"0x584"`
 }
 
 type MlsBlobRef struct {

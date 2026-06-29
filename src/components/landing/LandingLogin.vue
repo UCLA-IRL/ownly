@@ -7,8 +7,20 @@
         :text="loadStatus"
       />
 
+      <div v-else-if="fastJoinIdentityMismatch" class="box anim-rtl-fade p-4">
+        <div class="header is-size-4 has-text-weight-semibold has-text-danger">
+          Cannot join via fast-join
+        </div>
+        <p class="mt-2">{{ fastJoinIdentityMismatch }}</p>
+      </div>
+
       <div class="box anim-rtl-fade p-4" v-else-if="flowStep === 'auth'">
         <div class="header is-size-4 has-text-weight-semibold">Get started</div>
+        <div v-if="fastJoinBundle" class="notification is-info is-light mt-2 p-2">
+          Joining workspace <strong>{{ fastJoinBundle.label }}</strong> as
+          <code>{{ fastJoinBundle.inviteeIdentity }}</code>. Authenticate with
+          the email or DNS that produces this identity.
+        </div>
         <p class="subtitle mt-1">
           Choose the authentication method that works best for you.
         </p>
@@ -308,8 +320,31 @@ import QrModal from '@/components/QrModal.vue';
 import ModalComponent from '@/components/ModalComponent.vue';
 import { describeIdentityKeyImportError } from '@/utils/identity-errors';
 import { decryptSecretPayload } from '@/utils/qr-crypto';
+import { useRoute } from 'vue-router';
+import { parseFastJoinBundleFromLocation, type FastJoinBundle } from '@/services/fast-join';
 
 const emit = defineEmits(['login', 'ready']);
+
+const route = useRoute();
+
+// If the URL carries a fast-join bundle, the identity the user authenticates
+// with MUST match the identity designated by the inviter. We check this in
+// two places:
+//
+//   - At NDNCERT submission: we predict the identity from the entered
+//     email/domain and refuse to submit when it doesn't match.
+//   - At identity-key check (proceedToIdentitySetup): when the user already
+//     has a testbed key + ID key, we refuse to log in when the ID key's
+//     identity doesn't match.
+const fastJoinBundle = ref<FastJoinBundle | null>(null);
+const fastJoinIdentityMismatch = ref<string | null>(null);
+
+if (typeof window !== 'undefined') {
+  fastJoinBundle.value = parseFastJoinBundleFromLocation(
+    route.query.fj,
+    window.location.hash,
+  );
+}
 
 const showLoading = ref(true);
 const flowStep = ref<'auth' | 'identity' | 'done'>('auth');
@@ -387,6 +422,19 @@ function emailSubmit() {
   if (!utils.validateEmail(emailAddress.value)) {
     emailError.value = 'Invalid email address';
     return;
+  }
+
+  // When joining via fast-join, the email chosen MUST convert to the
+  // identity the inviter designated. Refuse early if the predicted name
+  // doesn't match — running NDNCERT with a mismatched email would either
+  // fail outright or produce a testbed key that doesn't chain to the
+  // bundle's ephemeral cert.
+  if (fastJoinBundle.value) {
+    const predicted = utils.convertEmailToNameLegacy(emailAddress.value);
+    if (predicted !== fastJoinBundle.value.inviteeIdentity) {
+      emailError.value = `This email produces identity "${predicted}" but the fast-join link designates "${fastJoinBundle.value.inviteeIdentity}". Use a different email or contact the inviter.`;
+      return;
+    }
   }
 
   emailError.value = '';
@@ -470,6 +518,18 @@ function domainSubmit() {
     return;
   }
 
+  // When joining via fast-join, the DNS domain chosen MUST produce the
+  // identity the inviter designated. The DNS challenge's identity name is
+  // `/ndn/<domain>` for the default testbed, mirroring the Go-side
+  // caPrefix.Append(domain) call in ndncert_dns.
+  if (fastJoinBundle.value) {
+    const predicted = utils.convertDomainToName(formatted);
+    if (predicted !== fastJoinBundle.value.inviteeIdentity) {
+      domainError.value = `This domain produces identity "${predicted}" but the fast-join link designates "${fastJoinBundle.value.inviteeIdentity}". Use a different domain or contact the inviter.`;
+      return;
+    }
+  }
+
   domainError.value = '';
   domainName.value = formatted;
   startDnsChallenge();
@@ -534,6 +594,20 @@ async function proceedToIdentitySetup() {
     showLoading.value = false;
 
     if (overview.local?.length) {
+      // When joining via fast-join, refuse to log in if the user's existing
+      // identity key doesn't match the identity designated by the inviter.
+      // The bundle's ephemeral cert chains to a signer under
+      // inviteeIdentity, and the trust schema will reject the precert if
+      // we proceed under a different identity — fail fast here instead.
+      if (fastJoinBundle.value && overview.identity !== fastJoinBundle.value.inviteeIdentity) {
+        fastJoinIdentityMismatch.value =
+          `Your current identity "${overview.identity}" does not match ` +
+          `the identity designated by the fast-join link ` +
+          `("${fastJoinBundle.value.inviteeIdentity}"). ` +
+          `Sign out and re-authenticate with the correct email or domain, ` +
+          `or contact the inviter.`;
+        return;
+      }
       finishLogin();
       return;
     }

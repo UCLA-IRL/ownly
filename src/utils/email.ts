@@ -30,3 +30,11 @@ export function convertEmailToNameLegacy(email: string): string {
   const domain = parts[1].split('.').reverse();
   return '/' + ['ndn', ...domain, parts[0]].join('/');
 }
+
+export function convertDomainToName(domain: string): string {
+  // Mirrors the Go-side NDNCERT DNS challenge: the issued testbed cert's
+  // identity name is the testbed CA prefix with the verified domain
+  // appended as a single component. For the default `/ndn` testbed the
+  // resulting identity is `/ndn/<domain>`.
+  return '/ndn/' + domain.toLowerCase();
+}

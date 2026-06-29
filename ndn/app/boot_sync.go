@@ -114,6 +114,101 @@ func (a *App) publishPendingBootPeers() {
 	}
 }
 
+func (a *App) publishPendingBootFastJoinCerts() {
+	if a.bootSyncSession == nil || a.bootSyncSession.alo == nil {
+		return
+	}
+
+	wkspName := a.bootSyncSession.group.Prefix(-1)
+	isOwner, err := a.IsWorkspaceOwner(wkspName.String())
+	if err != nil || !isOwner {
+		return
+	}
+
+	groupStr := a.bootSyncSession.group.String()
+	index := a.loadFastJoinIndex()
+
+	for _, certName := range index.certNamesForGroup(groupStr) {
+		if !index.knownLatestCertPrefixForGroup(certName, groupStr) {
+			continue
+		}
+		nameStr := certName.String()
+		if index.publishedInGroup(nameStr, groupStr) {
+			continue
+		}
+
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil && len(certName) > 0 {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			continue
+		}
+
+		if _, state, err := a.bootSyncSession.alo.Publish(enc.Wire{wire}); err != nil {
+			log.Error(a, "Failed to publish fast-join cert to boot group", "err", err, "name", certName)
+			continue
+		} else {
+			a.PersistBootState(state)
+		}
+
+		index.ensureGroup(nameStr, groupStr, true)
+		log.Info(a, "Published fast-join cert to boot sync", "name", certName, "group", a.bootSyncSession.group)
+	}
+
+	if err := a.persistFastJoinIndex(index); err != nil {
+		log.Warn(a, "Failed to persist fast-join index", "err", err, "group", a.bootSyncSession.group)
+	}
+}
+
+func (a *App) publishLocalIdentityCertsToBoot() {
+	if a.bootSyncSession == nil || a.bootSyncSession.alo == nil {
+		return
+	}
+
+	entries, err := a.localIdentityEntries()
+	if err != nil {
+		log.Warn(a, "Failed to list local identity entries for boot publish", "err", err)
+		return
+	}
+
+	index := a.loadPublishIndex(localIdentityPublishIndexKey)
+	groupStr := a.bootSyncSession.group.String()
+
+	for _, entry := range entries {
+		if index.publishedInGroup(entry.CertName, groupStr) {
+			continue
+		}
+
+		certName, err := enc.NameFromStr(entry.CertName)
+		if err != nil {
+			continue
+		}
+
+		wire, _ := a.store.Get(certName, false)
+		if wire == nil && len(certName) > 0 {
+			wire, _ = a.store.Get(certName.Prefix(-1), true)
+		}
+		if wire == nil {
+			continue
+		}
+
+		if _, state, err := a.bootSyncSession.alo.Publish(enc.Wire{wire}); err != nil {
+			log.Error(a, "Failed to publish local identity cert to boot group", "err", err, "name", certName)
+			continue
+		} else {
+			a.PersistBootState(state)
+		}
+
+		index.ensureGroup(entry.CertName, groupStr, true)
+		log.Info(a, "Published local identity cert to boot sync", "name", certName, "group", a.bootSyncSession.group)
+	}
+
+	if err := a.persistPublishIndex(localIdentityPublishIndexKey, index); err != nil {
+		log.Warn(a, "Failed to persist local identity publish index", "err", err, "group", a.bootSyncSession.group)
+	}
+}
+
 func (a *App) handleBootIdentityCert(data ndn.Data, dataWire enc.Wire) {
 	if data == nil || len(data.Name()) < 2 {
 		return
@@ -177,7 +272,7 @@ func (a *App) participantSub(client ndn.Client) error {
 	return nil
 }
 
-func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc.Name, preCert enc.Wire, appPayload []byte) error {
+func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc.Name, preCert enc.Wire, identityCert enc.Wire, appPayload []byte) error {
 	// shortcut to check if we already started
 	group := wkspName.Append(enc.NewKeywordComponent("boot"))
 	key := "boot-pub:" + group.String()
@@ -231,6 +326,7 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 	bootPayload := (&tlv.Message{
 		BootJoin: &tlv.BootJoin{
 			PreCertFullName: preCertName.Bytes(),
+			InviteeIdCert:   identityCert.Join(),
 			AppPayload:      appPayload,
 		},
 	}).Encode()
@@ -241,6 +337,21 @@ func (a *App) StartBootSyncParticipant(client ndn.Client, wkspName, userName enc
 		a.PersistBootState(state)
 		log.Info(a, "Published precert for signing", "name", preCertName, "app_payload_len", len(appPayload))
 	}
+
+	// Also publish the participant's IDCERT directly into the SVS boot group so
+	// the owner and follower devices see it in their Authenticated Peers UI
+	// without depending on parsing it back out of the BootJoin payload. The
+	// owner's ownerSub Case 1 (identityIssuer) routes such certs through
+	// handleBootIdentityCert → importPeerCerts, which writes them into
+	// /local/peer-identities and promotes them as trust anchors.
+	if len(identityCert) > 0 {
+		if _, state, err := alo.Publish(identityCert); err != nil {
+			log.Warn(a, "Failed to publish participant IDCERT to boot group", "err", err)
+		} else {
+			a.PersistBootState(state)
+			log.Info(a, "Published participant IDCERT to boot sync")
+		}
+	}
 	return nil
 }
 
@@ -248,7 +359,7 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 	if a.bootSyncSession == nil || a.bootSyncSession.alo == nil {
 		return fmt.Errorf("Boot sync need to start first")
 	}
-	oneWeekAgo := time.Now().Add(-7 * 24 * time.Hour)
+	bootGroup := wkspName.Append(enc.NewKeywordComponent("boot"))
 	ownerPrefix := wkspName.Append(enc.NewKeywordComponent("owner"))
 
 	// Owner should subscribe to everything and get three types of data
@@ -261,6 +372,7 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 		if err == nil {
 			if ct, ok := contentData.ContentType().Get(); ok && ct == ndn.ContentTypeKey {
 				if len(contentData.Name()) > 1 && contentData.Name().At(-2).Equal(identityIssuer) {
+					// Always accept owner-published peer identities from boot sync.
 					a.PersistBootState(pub.State)
 					a.handleBootIdentityCert(contentData, pub.Content)
 					return
@@ -271,6 +383,12 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 					// Keep track of user certs issued by peer owners
 					if err := client.Store().Put(name, content.Join()); err != nil {
 						log.Warn(a, "Failed to store final cert in store", "err", err, "name", name)
+					}
+					if _, err := a.importPeerCerts([][]byte{content.Join()}, peerCertImportOpts{
+						Published: true,
+						Group:     a.bootSyncSession.group,
+					}); err != nil {
+						log.Warn(a, "Failed to import final cert from peer owner", "err", err, "name", name)
 					}
 					a.PersistBootState(pub.State)
 					log.Info(a, "Stored final cert from boot sync", "name", name)
@@ -284,32 +402,82 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 		if err == nil && msg != nil && msg.BootJoin != nil {
 			preCertName, err := enc.NameFromBytes(msg.BootJoin.PreCertFullName)
 			if err != nil || preCertName == nil {
+				a.PersistBootState(pub.State)
 				log.Warn(a, "Ignoring boot join payload with invalid precert name", "err", err)
 				return
 			}
 			keyName, err := security.GetKeyNameFromCertName(preCertName)
 			if err != nil || keyName == nil {
+				a.PersistBootState(pub.State)
 				log.Warn(a, "Ignoring boot join payload with invalid precert key name", "err", err, "name", preCertName)
 				return
 			}
+			userName, err := security.GetIdentityFromKeyName(keyName)
+			if err != nil || !wkspName.IsPrefix(userName) {
+				a.PersistBootState(pub.State)
+				log.Warn(a, "Ignoring boot join payload with invalid precert identity", "err", err, "name", preCertName, "identity", userName)
+				return
+			}
 			appPayload := msg.BootJoin.AppPayload
-			a.PersistBootState(pub.State)
 
 			// Skip if we already have a final cert for this precert.
 			finalCertPrefix := keyName.Append(enc.NewGenericComponent("anchor"))
 			if finalCert, _ := client.LatestLocal(finalCertPrefix); finalCert != nil {
+				a.PersistBootState(pub.State)
 				log.Info(a, "Already have a final cert for precert key, skipping")
 				return
 			}
 
-			// In case we fetch too history precert
-			if comp := preCertName.At(-1); comp.IsVersion() {
-				ver := comp.NumberVal()
-				t := time.UnixMicro(int64(ver))
-				if t.Before(oneWeekAgo) {
-					log.Info(a, "Ignoring stale precert", "name", preCertName, "ts", t)
+			// In most cases the fetching logic here is redundant since precert is in cache
+			respCh := make(chan ndn.ExpressCallbackArgs, 1)
+			client.ExpressR(ndn.ExpressRArgs{
+				Name: preCertName,
+				Config: &ndn.InterestConfig{
+					CanBePrefix:    false,
+					MustBeFresh:    true,
+					Lifetime:       optional.Some(time.Second),
+					ForwardingHint: []enc.Name{pub.DataName},
+				},
+				Retries: 3,
+				Callback: func(cb ndn.ExpressCallbackArgs) {
+					respCh <- cb
+				},
+			})
+			args := <-respCh
+			if args.Result != ndn.InterestResultData || args.RawData == nil || args.Data == nil {
+				a.PersistBootState(pub.State)
+				log.Error(a, "Failed to fetch precert", "name", preCertName, "result", args.Result, "err", args.Error)
+				return
+			}
+			if len(msg.BootJoin.InviteeIdCert) > 0 {
+				if _, err := a.importBootJoinIdentityCert(msg.BootJoin.InviteeIdCert, bootGroup); err != nil {
+					a.PersistBootState(pub.State)
+					log.Warn(a, "Ignoring boot join with invalid piggybacked identity cert", "publisher", pub.Publisher, "name", preCertName, "err", err)
 					return
 				}
+			}
+
+			validCh := make(chan struct {
+				valid bool
+				err   error
+			}, 1)
+			client.ValidateExt(ndn.ValidateExtArgs{
+				Data:              args.Data,
+				SigCovered:        args.SigCovered,
+				UseDataNameFwHint: optional.Some(true),
+				IgnoreValidity:    optional.Some(false),
+				Callback: func(valid bool, err error) {
+					validCh <- struct {
+						valid bool
+						err   error
+					}{valid: valid, err: err}
+				},
+			})
+			validRes := <-validCh
+			if validRes.err != nil || !validRes.valid {
+				a.PersistBootState(pub.State)
+				log.Error(a, "Failed to validate precert through trust schema", "name", preCertName, "valid", validRes.valid, "err", validRes.err)
+				return
 			}
 
 			if len(appPayload) > 0 {
@@ -325,51 +493,12 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 					log.Warn(a, "Boot join payload callback failed", "err", cbErr, "name", preCertName)
 				}
 			}
-
-			// In most cases the fetching logic here is redundant since precert is in cache
-			respCh := make(chan ndn.ExpressCallbackArgs, 1)
-			client.ExpressR(ndn.ExpressRArgs{
-				Name: preCertName,
-				Config: &ndn.InterestConfig{
-					CanBePrefix:    false,
-					MustBeFresh:    true,
-					Lifetime:       optional.Some(time.Second),
-					ForwardingHint: []enc.Name{pub.DataName},
-				},
-				Retries: 3,
-				Callback: func(cb ndn.ExpressCallbackArgs) {
-					if cb.Result != ndn.InterestResultData || cb.Data == nil {
-						respCh <- cb
-						return
-					}
-					client.ValidateExt(ndn.ValidateExtArgs{
-						Data:              cb.Data,
-						SigCovered:        cb.SigCovered,
-						UseDataNameFwHint: optional.Some(true),
-						IgnoreValidity:    optional.Some(false),
-						Callback: func(valid bool, err error) {
-							if !valid {
-								respCh <- ndn.ExpressCallbackArgs{
-									Result: ndn.InterestResultError,
-									Error:  err,
-								}
-								return
-							}
-							respCh <- cb
-						},
-					})
-				},
-			})
-			args := <-respCh
-			if args.Result != ndn.InterestResultData || args.RawData == nil || args.Data == nil {
-				log.Error(a, "Failed to fetch precert", "name", preCertName, "result", args.Result, "err", args.Error)
-				return
-			}
 			preWire := args.RawData
 
 			userCert, err := a.SignFinalCert(preWire, rootSigner)
 			userCertData, _, err := spec.Spec{}.ReadData(enc.NewWireView(userCert))
 			if err != nil {
+				a.PersistBootState(pub.State)
 				log.Error(a, "Failed to sign final cert for", "err", err, "name", preCertName)
 				return
 			}
@@ -381,6 +510,16 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 			// Keep track of user certs issued by this owner
 			if err := client.Store().Put(userCertData.Name(), userCert.Join()); err != nil {
 				log.Warn(a, "Failed to store final cert in local store", "err", err, "name", userCertData.Name())
+			}
+
+			// Index the final cert as a peer so the Authenticated Peers
+			// UI lists the participant and other owner devices see them
+			// via the SVS boot group publication.
+			if _, err := a.importPeerCerts([][]byte{userCert.Join()}, peerCertImportOpts{
+				Published: true,
+				Group:     a.bootSyncSession.group,
+			}); err != nil {
+				log.Warn(a, "Failed to import final cert as peer", "err", err, "name", userCertData.Name())
 			}
 
 			_, state, err := a.bootSyncSession.alo.Publish(userCert)
@@ -434,7 +573,9 @@ func (a *App) StartBootSyncOwner(client ndn.Client, wkspName enc.Name, rootSigne
 		log.Error(a, "Failed to start boot sync ALO", "err", err, "group", group)
 		return err
 	}
+	a.publishLocalIdentityCertsToBoot()
 	a.publishPendingBootPeers()
+	a.publishPendingBootFastJoinCerts()
 	return nil
 }
 

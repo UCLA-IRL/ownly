@@ -58,15 +58,25 @@ func (a *App) JoinWorkspace(wkspStr_ string, create bool, payload []byte) (wkspS
 	// TODO: fetch workspace "metadata" and check for existence
 	// If not existing, check the create flag and proceed
 
-	// Get a valid identity key to sign the certificate
-	idSigner, err := a.getIdentitySigner()
+	// Get a valid identity key to sign the certificate. For new workspaces
+	// (`create=true`) the signer is always a regular self-signed identity
+	// cert. For joining an existing workspace, fast-join participants get
+	// their owner-signed ephemeral cert back from the local keychain; legacy
+	// participants fall back to a regular self-signed identity cert.
+	var idSigner ndn.Signer
+	var fastJoin bool
+	if create {
+		idSigner, err = a.getIdentitySigner()
+	} else {
+		idSigner, fastJoin, err = a.getIdentitySignerForWorkspace(wkspName)
+	}
 	if err != nil {
 		return
 	}
 
-	// Check if the workspace is outside our namespace
-	// In that case we need to attach the invitation cross schema to certificate
-	var invitation enc.Wire = nil
+	// Check if the workspace is outside our namespace. Legacy joins fetch and
+	// cache the cross-schema invitation; fast joins already imported their
+	// owner-signed ephemeral cert locally.
 	idName, _ := security.GetIdentityFromKeyName(idSigner.KeyName())
 	if !idName.IsPrefix(wkspName) {
 		// Check if we are allowed to create the workspace
@@ -75,64 +85,71 @@ func (a *App) JoinWorkspace(wkspStr_ string, create bool, payload []byte) (wkspS
 			return
 		}
 
-		// Other namespace - check for invitation
-		inviteName := wkspName.
-			Append(enc.NewKeywordComponent("boot")).
-			Append(enc.NewKeywordComponent("INVITE")).
-			Append(idName...)
+		if fastJoin {
+			log.Info(a, "Using local fast-join authority", "name", wkspStr, "identity", idName)
+		} else {
+			// Other namespace - check for invitation
+			inviteName := wkspName.
+				Append(enc.NewKeywordComponent("boot")).
+				Append(enc.NewKeywordComponent("INVITE")).
+				Append(idName...)
 
-		// accessRequestPrefix, _ := enc.NameFromStr("/ndn/multicast" + wkspStr) // Uncomment if you want to use multicast
-		accessRequestPrefix, _ := enc.NameFromStr(wkspStr)
+			accessRequestPrefix, _ := enc.NameFromStr(wkspStr)
 
-		// Name to request access from workspace initiator
-		accessRequestName := accessRequestPrefix.
-			Append(enc.NewKeywordComponent("boot")).
-			Append(enc.NewKeywordComponent("INVITE")).
-			Append(idName...)
+			// Name to request access from workspace initiator
+			accessRequestName := accessRequestPrefix.
+				Append(enc.NewKeywordComponent("boot")).
+				Append(enc.NewKeywordComponent("INVITE")).
+				Append(idName...)
 
-		// Fetch the invitation from the repo
-		log.Info(a, "Fetching workspace invite from repo", "name", inviteName)
-		ch := make(chan ndn.ExpressCallbackArgs)
-		object.ExpressR(a.engine, ndn.ExpressRArgs{
-			Name: inviteName,
-			Config: &ndn.InterestConfig{
-				MustBeFresh:    true,
-				CanBePrefix:    true,
-				ForwardingHint: []enc.Name{repoName},
-			},
-			Retries:  1,
-			Callback: func(args ndn.ExpressCallbackArgs) { ch <- args },
-		})
-		args := <-ch
-		if args.Result != ndn.InterestResultData {
-			// If the invite is not found, request access from the workspace initiator
-			log.Info(a, "Fetching workspace invite from initiator", "name", inviteName)
-			ch2 := make(chan ndn.ExpressCallbackArgs)
-			object.ExpressR(a.engine, ndn.ExpressRArgs{
-				Name: accessRequestName,
-				Config: &ndn.InterestConfig{
-					MustBeFresh: true,
-					CanBePrefix: true,
-				},
-				Retries:  20,
-				Callback: func(args ndn.ExpressCallbackArgs) { ch2 <- args },
-			})
-			args = <-ch2
+			if invitationBytes, _ := a.store.Get(inviteName, true); invitationBytes != nil {
+				log.Info(a, "Using local workspace invitation", "name", wkspStr, "invite", inviteName)
+			} else {
+				// Fetch the invitation from the repo
+				log.Info(a, "Fetching workspace invite from repo", "name", inviteName)
+				ch := make(chan ndn.ExpressCallbackArgs)
+				object.ExpressR(a.engine, ndn.ExpressRArgs{
+					Name: inviteName,
+					Config: &ndn.InterestConfig{
+						MustBeFresh:    true,
+						CanBePrefix:    true,
+						ForwardingHint: []enc.Name{repoName},
+					},
+					Retries:  1,
+					Callback: func(args ndn.ExpressCallbackArgs) { ch <- args },
+				})
+				args := <-ch
+				if args.Result != ndn.InterestResultData {
+					// If the invite is not found, request access from the workspace initiator
+					log.Info(a, "Fetching workspace invite from initiator", "name", inviteName)
+					ch2 := make(chan ndn.ExpressCallbackArgs)
+					object.ExpressR(a.engine, ndn.ExpressRArgs{
+						Name: accessRequestName,
+						Config: &ndn.InterestConfig{
+							MustBeFresh: true,
+							CanBePrefix: true,
+						},
+						Retries:  20,
+						Callback: func(args ndn.ExpressCallbackArgs) { ch2 <- args },
+					})
+					args = <-ch2
 
-			if args.Result != ndn.InterestResultData {
-				// Failed if both attempts do not return data
-				err = fmt.Errorf("failed to get invitation, make sure %s is invited to %s (%s)",
-					idName, wkspName, args.Result)
-				return
+					if args.Result != ndn.InterestResultData {
+						// Failed if both attempts do not return data
+						err = fmt.Errorf("failed to get invitation, make sure %s is invited to %s (%s)",
+							idName, wkspName, args.Result)
+						return
+					}
+				}
+
+				// TODO: validate the invitation itself
+				invitation := args.RawData
+				invitationData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(invitation))
+				a.store.Put(invitationData.Name(), invitation.Join())
+
+				log.Info(a, "Got workspace invitation", "name", wkspStr, "invite", args.Data.Name())
 			}
 		}
-
-		// TODO: validate the invitation itself
-		invitation = args.RawData
-		invitationData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(invitation))
-		a.store.Put(invitationData.Name(), invitation.Join())
-
-		log.Info(a, "Got workspace invitation", "name", wkspStr, "invite", args.Data.Name())
 	} else {
 		log.Info(a, "Joining workspace in own namespace", "name", wkspStr)
 	}
@@ -222,8 +239,12 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		return
 	}
 
-	// Get identity key to use
-	identitySigner, err := a.getIdentitySigner()
+	wkspName, _ := enc.NameFromStr(groupStr)
+
+	// Get identity key to use. The fast-join bool is captured for symmetry
+	// with JoinWorkspace; GetWorkspace's participant path detects fast-join
+	// via the absence of a cross-schema invitation wire (see below).
+	identitySigner, _, err := a.getIdentitySignerForWorkspace(wkspName)
 	if err != nil {
 		return
 	}
@@ -239,14 +260,13 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	// Announce testbed key prefix for mgmt/repo operations
 	client := object.NewClient(a.engine, a.store, a.trust)
 
-	// The store must have invitation, otherwise we are in trouble
-	wkspName, _ := enc.NameFromStr(groupStr)
 	detectUser := wkspName.Append(enc.NewKeywordComponent("KD"))
 	detectRoot := wkspName.Append(enc.NewKeywordComponent("RD"))
 	userSigner := a.trust.Suggest(detectUser)
 	rootSigner := a.trust.Suggest(detectRoot)
 	var nodeName enc.Name
 	var preCertWire enc.Wire
+	var identityCertWire enc.Wire
 	var joinPayload []byte
 	var bootSyncFunc func() error
 
@@ -265,16 +285,18 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		}
 	} else {
 		nodeName = idName
-		// Check local invitation first
+		// Check local invitation first. The cross-schema invitation wire is
+		// only present for legacy invites (published via sign_and_pub_invitation);
+		// fast-join participants don't have one and proceed directly to
+		// signPreCert with no CrossSchema attached (the regular schema rule
+		// #user_precert <= #userid_cert | #ephemeral_cert validates the precert
+		// via the trust-schema path).
 		inviteName := wkspName.
 			Append(enc.NewKeywordComponent("boot")).
 			Append(enc.NewKeywordComponent("INVITE")).
 			Append(idName...)
 		invitation, _ := client.Store().Get(inviteName, true)
-		if invitation == nil {
-			err = fmt.Errorf("No invitation found")
-			return
-		}
+		// invitation may be nil for fast-join participants.
 		// Prepare wksp user key
 		if userSigner == nil {
 			detect := wkspName.Append(enc.NewKeywordComponent("PD"))
@@ -292,9 +314,34 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}
 		}
 		// User always willing to help
+		// Resolve the participant's IDCERT (self-signed /identity/<ver>)
+		// separately from the fast-join signer. The fast-join signer (used
+		// for signPreCert above) chains to the owner via the ephemeral cert,
+		// but for the BootJoin payload we want the participant's own
+		// /identity/<ver> cert so the owner can ingest it as a peer in the
+		// Authenticated Peers UI.
+		if wire, _, certErr := a.localIdCertWire(); certErr == nil {
+			identityCertWire = wire
+		} else {
+			log.Warn(a, "Participant has no local IDCERT for boot join; falling back to fast-join cert", "err", certErr)
+			certName := identitySigner.KeyLocator()
+			if len(certName) == 0 || certName.Equal(identitySigner.KeyName()) {
+				certName, err = a.identityCertNameForSigner(identitySigner)
+			}
+			if err == nil {
+				if wire, _, certErr := a.certWireByName(certName); certErr == nil {
+					identityCertWire = wire
+				} else {
+					log.Warn(a, "Failed to load participant identity cert for boot join", "name", certName, "err", certErr)
+				}
+			} else {
+				log.Warn(a, "Failed to find participant identity cert for boot join", "err", err)
+				err = nil
+			}
+		}
 		joinPayload = a.joinPayloads[wkspName.String()]
 		bootSyncFunc = func() error {
-			return a.StartBootSyncParticipant(client, wkspName, idName, preCertWire, joinPayload)
+			return a.StartBootSyncParticipant(client, wkspName, idName, preCertWire, identityCertWire, joinPayload)
 		}
 	}
 
@@ -305,6 +352,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 		Testbed:   testbedSigner,
 		Root:      rootSigner,
 		User:      userSigner,
+		IsOwner:   isOwner,
 	})
 	// Reorder function calls to ensure key prefixes get registered first
 	time.Sleep(100 * time.Millisecond)
@@ -345,6 +393,62 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	}
 
 	var workspaceJs map[string]any
+	publishInvitation := func(invitee enc.Name) (enc.Wire, error) {
+		// Make the invitation name under boot sync group:
+		// /<wksp>/32=boot/32=INVITE/<invitee>/v=<time>
+		inviteName := wkspName.
+			Append(enc.NewKeywordComponent("boot")).
+			Append(enc.NewKeywordComponent("INVITE")).
+			Append(invitee...).
+			WithVersion(enc.VersionUnixMicro)
+
+		// Make sure we can make this invitation
+		signer := client.SuggestSigner(inviteName)
+		if signer == nil {
+			return nil, fmt.Errorf("No valid signing key for invitation")
+		}
+		preCertNameRule := wkspName.
+			Append(invitee...).
+			Append(enc.NewGenericComponent("KEY")).
+			Append(enc.NewGenericComponent("_")).
+			Append(enc.NewGenericComponent("pre"))
+
+		wire, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
+			Name:   inviteName,
+			Signer: signer,
+			Content: trust_schema.CrossSchemaContent{
+				SimpleSchemaRules: []*trust_schema.SimpleSchemaRule{{
+					NamePrefix: preCertNameRule,
+					KeyLocator: &spec.KeyLocator{
+						Name: invitee.Append(enc.NewGenericComponent("KEY")),
+					},
+				}},
+			},
+			NotBefore: time.Now().Add(-time.Hour),
+			NotAfter:  time.Now().AddDate(50, 0, 0), // for now
+			Store:     client.Store(),               // auto-store
+		})
+		if err != nil {
+			return nil, err
+		}
+		// Publish invitation to boot group with encapsulated Data so repo can store it immediately
+		if a.bootSyncSession != nil && a.bootSyncSession.alo != nil {
+			cmd := spec_repo.RepoCmd{
+				BlobFetch: &spec_repo.BlobFetch{
+					Data: [][]byte{wire.Join()},
+				},
+			}
+			_, bootState, err := a.bootSyncSession.alo.Publish(cmd.Encode())
+			if err != nil {
+				return nil, err
+			}
+			a.PersistBootState(bootState)
+		} else {
+			return nil, fmt.Errorf("Boot Sync hasn't started yet")
+		}
+		return wire, nil
+	}
+
 	workspaceJs = map[string]any{
 		// name: string;
 		// Expose the real identity name to JS. The boot/SVS node label may be
@@ -827,59 +931,58 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				return nil, err
 			}
 
-			// Make the invitation name under boot sync group:
-			// /<wksp>/32=boot/32=INVITE/<invitee>/v=<time>
-			inviteName := wkspName.
-				Append(enc.NewKeywordComponent("boot")).
-				Append(enc.NewKeywordComponent("INVITE")).
-				Append(invitee...).
-				WithVersion(enc.VersionUnixMicro)
-
-			// Make sure we can make this invitation
-			signer := client.SuggestSigner(inviteName)
-			if signer == nil {
-				return nil, fmt.Errorf("No valid signing key for invitation")
-			}
-			preCertNameRule := wkspName.
-				Append(invitee...).
-				Append(enc.NewGenericComponent("KEY")).
-				Append(enc.NewGenericComponent("_")).
-				Append(enc.NewGenericComponent("pre"))
-
-			wire, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
-				Name:   inviteName,
-				Signer: signer,
-				Content: trust_schema.CrossSchemaContent{
-					SimpleSchemaRules: []*trust_schema.SimpleSchemaRule{{
-						NamePrefix: preCertNameRule,
-						KeyLocator: &spec.KeyLocator{
-							Name: invitee.Append(enc.NewGenericComponent("KEY")),
-						},
-					}},
-				},
-				NotBefore: time.Now().Add(-time.Hour),
-				NotAfter:  time.Now().AddDate(50, 0, 0), // for now
-				Store:     client.Store(),               // auto-store
-			})
+			wire, err := publishInvitation(invitee)
 			if err != nil {
 				return nil, err
 			}
-			// Publish invitation to boot group with encapsulated Data so repo can store it immediately
-			if a.bootSyncSession != nil && a.bootSyncSession.alo != nil {
-				cmd := spec_repo.RepoCmd{
-					BlobFetch: &spec_repo.BlobFetch{
-						Data: [][]byte{wire.Join()},
-					},
-				}
-				_, bootState, err := a.bootSyncSession.alo.Publish(cmd.Encode())
-				if err != nil {
-					return nil, err
-				}
-				a.PersistBootState(bootState)
-			} else {
-				return nil, fmt.Errorf("Boot Sync hasn't started yet")
-			}
 			return jsutil.SliceToJsArray(wire.Join()), nil
+		}),
+
+		// forget_peer_identity(invitee: string): Promise<void>;
+		"forget_peer_identity": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			if !isOwner {
+				return nil, fmt.Errorf("Only owner can forget peer identities")
+			}
+			bootGroup := wkspName.Append(enc.NewKeywordComponent("boot"))
+			return nil, a.forgetPeerIdentityForGroup(invitee, bootGroup, nil)
+		}),
+
+		// make_fast_join_invitation(invitee: string): Promise<FastJoinInvitation>;
+		"make_fast_join_invitation": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			invitee, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, err
+			}
+			if !isOwner {
+				return nil, fmt.Errorf("Only owner can create fast join invitations")
+			}
+
+			fast, err := a.makeFastJoinIdentity(wkspName, invitee, identitySigner)
+			if err != nil {
+				return nil, err
+			}
+			bootGroup := wkspName.Append(enc.NewKeywordComponent("boot"))
+			a.publishPendingBootFastJoinCerts()
+			a.ExecWithConnectivity(func() {
+				var dataPrefix enc.Name
+				if a.bootSyncSession != nil && a.bootSyncSession.alo != nil && a.bootSyncSession.group.Equal(bootGroup) {
+					dataPrefix = a.bootSyncSession.alo.DataPrefix()
+				}
+				a.NotifyRepoJoin(client, bootGroup, dataPrefix, false)
+			})
+			// Fast-join bundles do NOT carry a cross-schema invitation wire.
+			// The ephemeral cert chains to the owner's #ownerid_cert (a trust
+			// anchor on the invitee side via PromoteAnchor), so the regular
+			// schema rule #user_precert <= #userid_cert | #ephemeral_cert
+			// validates the precert without needing a fallback cross-schema.
+			// Legacy invites still go through sign_and_pub_invitation +
+			// signPreCert with the cross-schema attached, for backward
+			// compatibility with the pre-fast-join flow.
+			return fast.toJs(), nil
 		}),
 
 		// wait_for_dsk(key: Uint8Array): Promise<Uint8Array>;
@@ -901,6 +1004,7 @@ type announceKeyPrefixArgs struct {
 	Testbed   ndn.Signer
 	Root      ndn.Signer
 	User      ndn.Signer
+	IsOwner   bool
 }
 
 func (a *App) announceKeyPrefix(args announceKeyPrefixArgs) {
@@ -909,8 +1013,7 @@ func (a *App) announceKeyPrefix(args announceKeyPrefixArgs) {
 	}
 
 	routes := []enc.Name{args.Testbed.KeyName(), args.User.KeyName()}
-	isOwner, _ := a.IsWorkspaceOwner(args.Workspace.String())
-	if isOwner {
+	if args.IsOwner {
 		accessRequestPrefix := args.Workspace.
 			Append(enc.NewKeywordComponent("boot")).
 			Append(enc.NewKeywordComponent("INVITE"))
@@ -954,7 +1057,13 @@ func (a *App) signPreCert(wkspName enc.Name, identitySigner ndn.Signer, invitati
 	// Create certificate for this workspace
 	// TODO: limit validity to same as invite validity
 	signerName := identitySigner.KeyName()
-	identityCertName := signerName.Append(enc.NewGenericComponent("identity"))
+	identityCertName := identitySigner.KeyLocator()
+	if len(identityCertName) == 0 || identityCertName.Equal(signerName) {
+		identityCertName, err = a.identityCertNameForSigner(identitySigner)
+		if err != nil {
+			return nil, userSigner, err
+		}
+	}
 	identityCtxSigner := sig.WithKeyLocator(identitySigner, identityCertName)
 	preCertWire, err := security.SignCert(security.SignCertArgs{
 		Data:        userSecret,
@@ -978,20 +1087,117 @@ func (a *App) signPreCert(wkspName enc.Name, identitySigner ndn.Signer, invitati
 	return preCertWire, userSigner, nil
 }
 
+type fastJoinIdentity struct {
+	OwnerCert       []byte
+	EphemeralSecret []byte
+	EphemeralCert   []byte
+	// InviteeIdentity is the NDN name the inviter designated for this
+	// fast-join invitation. Carried alongside the cert so the invitee can
+	// display it without parsing the cert wire themselves.
+	InviteeIdentity string
+}
+
+func (f fastJoinIdentity) toJs() map[string]any {
+	return map[string]any{
+		"owner_cert":       jsutil.SliceToJsArray(f.OwnerCert),
+		"ephemeral_secret": jsutil.SliceToJsArray(f.EphemeralSecret),
+		"ephemeral_cert":   jsutil.SliceToJsArray(f.EphemeralCert),
+		"invitee_identity": f.InviteeIdentity,
+	}
+}
+
+func (a *App) certWireByName(name enc.Name) (enc.Wire, ndn.Data, error) {
+	if len(name) == 0 {
+		return nil, nil, fmt.Errorf("empty certificate name")
+	}
+	wireBytes, _ := a.store.Get(name, false)
+	if wireBytes == nil {
+		wireBytes, _ = a.store.Get(name.Prefix(-1), true)
+	}
+	if wireBytes == nil {
+		return nil, nil, fmt.Errorf("certificate not found: %s", name)
+	}
+	data, _, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{wireBytes}))
+	if err != nil {
+		return nil, nil, err
+	}
+	return enc.Wire{wireBytes}, data, nil
+}
+
+func (a *App) makeFastJoinIdentity(wkspName, invitee enc.Name, ownerIdentitySigner ndn.Signer) (fastJoinIdentity, error) {
+	if ownerIdentitySigner == nil {
+		return fastJoinIdentity{}, fmt.Errorf("No owner identity signer")
+	}
+
+	keyName := security.MakeKeyName(invitee)
+	ephemeralSigner, err := sig.KeygenEcc(keyName, elliptic.P256())
+	if err != nil {
+		return fastJoinIdentity{}, err
+	}
+
+	ownerCertName, err := a.identityCertNameForSigner(ownerIdentitySigner)
+	if err != nil {
+		return fastJoinIdentity{}, err
+	}
+	ownerCertWire, _, err := a.certWireByName(ownerCertName)
+	if err != nil {
+		return fastJoinIdentity{}, err
+	}
+
+	certWire, certData, err := a.makeOwnerSignedIdentityCert(ephemeralSigner, ownerIdentitySigner, ownerCertName)
+	if err != nil {
+		return fastJoinIdentity{}, err
+	}
+
+	secretWire, err := sig.MarshalSecret(ephemeralSigner)
+	if err != nil {
+		return fastJoinIdentity{}, err
+	}
+
+	bootGroup := wkspName.Append(enc.NewKeywordComponent("boot"))
+	if err := a.forgetFastJoinCertForGroup(invitee, bootGroup, certData.Name()); err != nil {
+		return fastJoinIdentity{}, err
+	}
+
+	_, err = a.rememberFastJoinCert(certWire.Join(), peerCertImportOpts{
+		Published: false,
+		Group:     bootGroup,
+	})
+	if err != nil {
+		return fastJoinIdentity{}, err
+	}
+
+	return fastJoinIdentity{
+		OwnerCert:       ownerCertWire.Join(),
+		EphemeralSecret: secretWire.Join(),
+		EphemeralCert:   certWire.Join(),
+		InviteeIdentity: invitee.String(),
+	}, nil
+}
+
 func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Signer, ndn.Signer, error) {
 	if identitySigner == nil {
 		return nil, nil, fmt.Errorf("No identity signer")
 	}
 	// Prepare identitySigner
-	identityKeylocator := identitySigner.KeyName().Append(enc.NewGenericComponent("identity"))
+	identityKeylocator, err := a.identityCertNameForSigner(identitySigner)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Find identity certificate: %w", err)
+	}
 	identityCtxSigner := sig.WithKeyLocator(identitySigner, identityKeylocator)
 
 	// Generate a trust anchor key
 	rootKeyName := security.MakeKeyName(wkspName)
 	rootSigner, err := sig.KeygenEcc(rootKeyName, elliptic.P256())
+	if err != nil {
+		return nil, nil, fmt.Errorf("Generate root key: %w", err)
+	}
 	rootKeylocator := rootSigner.KeyName().Append(enc.NewGenericComponent("self"))
 	rootCtxSigner := sig.WithKeyLocator(rootSigner, rootKeylocator)
 	rootSecret, err := sig.MarshalSecretToData(rootSigner)
+	if err != nil {
+		return rootSigner, nil, fmt.Errorf("Marshal root secret: %w", err)
+	}
 
 	// Generate a pre trust anchor
 	preAnchorWire, err := security.SignCert(security.SignCertArgs{
@@ -1032,8 +1238,14 @@ func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Sign
 	// Generate owner
 	ownerName := wkspName.Append(enc.NewKeywordComponent("owner"))
 	ownerKeyName := security.MakeKeyName(ownerName)
-	ownerSigner, _ := sig.KeygenEcc(ownerKeyName, elliptic.P256())
-	ownerSecret, _ := sig.MarshalSecretToData(ownerSigner)
+	ownerSigner, err := sig.KeygenEcc(ownerKeyName, elliptic.P256())
+	if err != nil {
+		return rootSigner, nil, fmt.Errorf("Generate owner key: %w", err)
+	}
+	ownerSecret, err := sig.MarshalSecretToData(ownerSigner)
+	if err != nil {
+		return rootSigner, ownerSigner, fmt.Errorf("Marshal owner secret: %w", err)
+	}
 	ownerCertWire, err := security.SignCert(security.SignCertArgs{
 		Data:      ownerSecret,
 		Signer:    rootCtxSigner,

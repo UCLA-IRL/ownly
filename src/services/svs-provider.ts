@@ -115,6 +115,12 @@ export class SvsProvider {
     for (const doc of this.docs.values()) {
       doc.destroy();
     }
+    for (const bundler of this.bundlers.values()) {
+      bundler.dispose();
+    }
+    this.docs.clear();
+    this.bundlers.clear();
+    this.aware.clear();
     await this.svs.stop();
     await this.db.close();
   }
@@ -291,6 +297,7 @@ export class SvsProvider {
 
     // Cleanup on document destroy
     doc.once('destroy', () => {
+      bundler.dispose();
       this.docs.delete(uuid);
       this.bundlers.delete(uuid);
       this.aware.delete(uuid);
@@ -358,7 +365,7 @@ export class SvsProvider {
     if (aware) return aware;
 
     aware = await NdnAwareness.create(this.wksp, this.svs, uuid, doc);
-    this.aware.set(doc.guid, aware);
+    this.aware.set(uuid, aware);
 
     return aware;
   }
@@ -447,17 +454,15 @@ export class SvsProvider {
         const count = await this.db.updateCount(uuid);
         if (count > 100) {
           let maxId = 0; // last update id we merged
-          const temp = new Y.Doc(); // temporary document to merge updates
 
           const updates = await this.db.updateGetAll(uuid);
           for (const update of updates) {
-            Y.applyUpdateV2(temp, update.update, this);
             maxId = Math.max(maxId, update.id!);
           }
 
-          // Encode the merged state
-          const merged = Y.encodeStateAsUpdateV2(temp);
-          temp.destroy();
+          const merged = updates.length === 1
+            ? updates[0].update
+            : Y.mergeUpdatesV2(updates.map((update) => update.update));
 
           // Merge updates and delete old ones in a transaction
           const utime = utils.monotonicEpoch();

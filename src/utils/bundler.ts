@@ -61,4 +61,13 @@ export class Bundler {
     this._cumulativeSize = 0;
     await this.emit(output);
   }
+
+  public dispose() {
+    if (this._timerId) {
+      clearTimeout(this._timerId);
+    }
+    this._timerId = undefined;
+    this._bundle = [];
+    this._cumulativeSize = 0;
+  }
 }

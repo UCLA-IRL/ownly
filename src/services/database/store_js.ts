@@ -38,6 +38,8 @@ type PacketEntry = {
 
 type TxnEntry = { op: 'put'; entry: PacketEntry };
 
+const STORE_PAGE_LIMIT = 64;
+
 /**
  * StoreJS implementation using Dexie.
  *
@@ -66,9 +68,10 @@ export class StoreDexie implements StoreJS {
     // Get the range of packets
     const range = this.range(name, prefix, last);
 
-    // Fetch entire range if hint was provided
-    if (last) {
-      const entries = await range.toArray();
+    // ndnd hints at most one segment page. Keep this bounded so a bad range
+    // cannot materialize a large IndexedDB slice into the JS heap.
+    if (last && !prefix) {
+      const entries = await range.limit(STORE_PAGE_LIMIT).toArray();
       return entries.map((pkt) => [pkt.name, pkt.blob]);
     }
 
