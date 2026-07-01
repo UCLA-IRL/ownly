@@ -9,7 +9,7 @@ import defines from './defines';
 // https://vite.dev/config/
 export default defineConfig({
   build: {
-    target: 'baseline-widely-available',
+    target: ['es2022', 'chrome111', 'edge111', 'firefox111', 'safari16'],
     chunkSizeWarningLimit: 10240,
   },
   plugins: [vue(), pwa()],
