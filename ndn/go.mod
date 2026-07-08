@@ -3,7 +3,7 @@ module github.com/pulsejet/ownly/ndn
 go 1.25.0
 
 require (
-	github.com/named-data/ndnd v1.5.4-0.20260629201307-13d1a37ba1ce
+	github.com/named-data/ndnd v1.5.4-0.20260708182552-362a01097784
 	golang.org/x/crypto v0.48.0
 )
 
