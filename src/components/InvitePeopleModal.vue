@@ -28,7 +28,8 @@
 
     <div class="field mt-2">
       <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
-        :disabled="!canManageMembers" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste" autofocus />
+        :disabled="!canManageMembers" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste"
+        autofocus />
     </div>
 
     <div class="invitee-management">
@@ -56,12 +57,12 @@
 
                   <div class="email" v-if="item.email">{{ item.email }}</div>
                 </div>
-                <button class="button invitee-list-action" :disabled="!canManageMembers"
-                  @click="acceptRequest(item)" title="Accept">
+                <button class="button invitee-list-action" :disabled="!canManageMembers" @click="acceptRequest(item)"
+                  title="Accept">
                   <FontAwesomeIcon :icon="faCheck" />
                 </button>
-                <button class="button invitee-list-action" :disabled="!canManageMembers"
-                  @click="denyRequest(item)" title="Deny">
+                <button class="button invitee-list-action" :disabled="!canManageMembers" @click="denyRequest(item)"
+                  title="Deny">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
               </div>
@@ -113,17 +114,17 @@
                 </div>
 
                 <button class="button invitee-list-action" v-if="canManageMembers && !item.owner"
-                  :disabled="resendingInvite === item.name"
-                  @click="resendInvite(item.name)" title="Generate a new fast-join link for this person">
+                  :disabled="resendingInvite === item.name" @click="resendInvite(item.name)"
+                  title="Generate a new fast-join link for this person">
                   <FontAwesomeIcon :icon="faShare" />
                 </button>
-                <button class="button invitee-list-action" v-if="item.pending"
-                  @click="removeInvitee(item.name)" title="Remove this pending invitee">
+                <button class="button invitee-list-action" v-if="item.pending" @click="removeInvitee(item.name)"
+                  title="Remove this pending invitee">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
                 <button class="button invitee-list-action" v-else-if="canManageMembers && !item.owner"
-                  :disabled="removingMember === item.name"
-                  @click="removeExistingMember(item.name)" title="Remove access to this workspace">
+                  :disabled="removingMember === item.name" @click="removeExistingMember(item.name)"
+                  title="Remove access to this workspace">
                   <FontAwesomeIcon :icon="faUserMinus" />
                 </button>
               </div>
@@ -363,7 +364,7 @@ function addInvitee(invitee: string) {
     }
 
     // Convert email to NDN name
-    const ndnName = utils.convertEmailToNameLegacy(entry);
+    const ndnName = utils.convertEmailToName(entry);
 
     // Form profile
     new_profile = { name: ndnName, email: entry };
