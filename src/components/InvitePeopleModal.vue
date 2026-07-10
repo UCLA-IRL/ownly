@@ -311,7 +311,7 @@ function addInvitee(invitee: string) {
     }
 
     // Convert email to NDN name
-    const ndnName = utils.convertEmailToNameLegacy(entry);
+    const ndnName = utils.convertEmailToName(entry);
 
     // Form profile
     new_profile = { name: ndnName, email: entry };
@@ -354,7 +354,7 @@ function addRequest(invitee: string) {
     }
 
     // Convert email to NDN name
-    const ndnName = utils.convertEmailToNameLegacy(entry);
+    const ndnName = utils.convertEmailToName(entry);
 
     // Form profile
     new_profile = { name: ndnName, email: entry };
