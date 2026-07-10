@@ -1,7 +1,6 @@
 import { WorkspaceChat } from './workspace-chat';
 import { WorkspaceProj, WorkspaceProjManager } from './workspace-proj';
 import { WorkspaceInviteManager } from './workspace-invite';
-import {WorkspaceAgentManager} from './workspace-agent'
 
 import ndn from '@/services/ndn';
 import { SvsProvider } from '@/services/svs-provider';
@@ -44,7 +43,6 @@ export class Workspace {
     public readonly chat: WorkspaceChat,
     public readonly proj: WorkspaceProjManager,
     public readonly invite: WorkspaceInviteManager,
-    public readonly agent: WorkspaceAgentManager | null,
   ) {}
 
   /**
@@ -82,15 +80,8 @@ export class Workspace {
       const proj = await WorkspaceProjManager.create(api, provider);
       const invite = await WorkspaceInviteManager.create(api, metadata, provider);
 
-      // Create workspace object first (without agent)
-      const workspace = new Workspace(metadata, api, provider, chat, proj, invite, null);
+      const workspace = new Workspace(metadata, api, provider, chat, proj, invite);
       workspace.registerRefreshHandlers();
-
-      // Then create agent with workspace reference
-      const agent = await WorkspaceAgentManager.create(api, provider, workspace);
-
-      // Update workspace with agent
-      (workspace as any).agent = agent;
 
       return workspace;
     } catch (e) {
@@ -115,9 +106,6 @@ export class Workspace {
     this.seenRefreshPings.clear();
     this.seenRefreshReqs.clear();
     await this.provider?.destroy();
-    if (this.agent) {
-      await this.agent.destroy();
-    }
     await this.api?.stop();
     await this.invite.destroy();
   }

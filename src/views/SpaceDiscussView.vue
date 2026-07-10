@@ -42,17 +42,11 @@
 
                 <div class="message">
                   <div class="header" v-if="!skipHeader(item, index)">
-                    <span class="name" :class="{ 'is-agent': isAgentMessage(item) }">
-                      {{ displayUserName(item.user) }}
-                      <span v-if="isAgentMessage(item)" class="tag is-small is-info ml-1">AI</span>
-                    </span>
+                    <span class="name">{{ displayUserName(item.user) }}</span>
                     <span class="time">{{ formatTime(item) }}</span>
                   </div>
 
-                  <div class="content"
-                       :class="{ 'agent-message': isAgentMessage(item) }"
-                       v-html="marked(item.message)">
-                  </div>
+                  <div class="content" v-html="marked(item.message)"></div>
                 </div>
               </div>
             </div>
@@ -158,7 +152,6 @@ async function setup() {
     // Update tab name
     document.title = utils.formTabName(wksp.value.metadata.label);
 
-    // Load regular chat channel messages (agents now participate in regular channels)
     items.value = await wksp.value.chat.getMessages(channelName.value);
   } catch (e) {
     console.error(e);
@@ -170,17 +163,6 @@ async function setup() {
   nextTick(() => scroller.value?.scrollToBottom());
   globalThis.setTimeout(() => scroller.value?.scrollToBottom(), 100); // why
   globalThis.setTimeout(() => scroller.value?.scrollToBottom(), 500); // uhh
-}
-
-/** Check if a message is from an agent */
-function isAgentMessage(item: IChatMessage): boolean {
-  if (!wksp.value || !item) return false;
-  // Check if the user name matches any agents in this channel (make sure it's not null)
-  if (wksp.value.agent) {
-    const agents = wksp.value.agent.getAgentsInChannel(channelName.value) || [];
-    return agents.some(agent => agent.name === item.user);
-  }
-  return false;
 }
 
 /** Skip the header if the user is the same and the message is within a minute */
@@ -220,7 +202,6 @@ async function send(event: Event) {
   }
   if (!outMessage.value.trim()) return;
 
-  // Send message to regular chat channel (agents participate in same channels)
   const message = {
     uuid: String(), // auto
     user: wksp.value!.username,
@@ -336,28 +317,6 @@ function onChatMessage(channel: string, message: IChatMessage) {
 
       .content {
         white-space: normal;
-
-        &.agent-message {
-          background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-          border-left: 3px solid #3273dc;
-          padding: 0.75rem;
-          border-radius: 6px;
-          margin-top: 0.25rem;
-
-          :deep(p) {
-            margin-bottom: 0.5rem;
-            &:last-child {
-              margin-bottom: 0;
-            }
-          }
-        }
-      }
-
-      .name {
-        &.is-agent {
-          color: #3273dc;
-          font-weight: 600;
-        }
       }
     }
   }

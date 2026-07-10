@@ -20,10 +20,6 @@
       <ul class="menu-list">
         <li><a><FontAwesomeIcon class="mr-1" :icon="faHashtag" size="sm" />General</a></li>
       </ul>
-      <p class="menu-label">AI Agents</p>
-      <ul class="menu-list">
-        <li><a><FontAwesomeIcon class="mr-1" :icon="faRobot" size="sm" />Manage agents</a></li>
-      </ul>
       <p class="menu-label">Workspace</p>
       <ul class="menu-list">
         <li><a :class="{ 'is-active': activeItem === 'invite' }">
@@ -36,7 +32,7 @@
 
 <script setup lang="ts">
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
-import { faLayerGroup, faHashtag, faRobot, faPlus, faSun, faMoon } from '@fortawesome/free-solid-svg-icons';
+import { faLayerGroup, faHashtag, faPlus, faSun, faMoon } from '@fortawesome/free-solid-svg-icons';
 
 defineProps({
   showTheme: {

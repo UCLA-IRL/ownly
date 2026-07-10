@@ -128,16 +128,6 @@
           </li>
         </ul>
 
-        <p class="menu-label">AI Agents</p>
-        <ul class="menu-list">
-          <li>
-            <a @click="showAgentModal = true">
-              <FontAwesomeIcon class="mr-1" :icon="faRobot" size="sm" />
-              Manage agents
-            </a>
-          </li>
-        </ul>
-
         <p class="menu-label">Workspace</p>
         <ul class="menu-list">
           <li>
@@ -192,10 +182,6 @@
     <AddProjectModal :show="showProjectModal" @close="showProjectModal = false" />
     <InvitePeopleModal :show="showInviteModal" @close="showInviteModal = false" />
     <QRIdentityModal :show="showIdentity" @close="showIdentity = false" />
-
-    <ModalComponent :show="showAgentModal" @close="showAgentModal = false">
-      <AgentBrowser />
-    </ModalComponent>
   </aside>
 </template>
 
@@ -214,7 +200,6 @@ import {
   faQrcode,
   faCircleInfo,
   faLightbulb,
-  faRobot,
   faCircleExclamation,
   faArrowsRotate,
   faGear,
@@ -228,8 +213,6 @@ import ProjectTree from './ProjectTree.vue';
 import ProjectTreeMenu from './ProjectTreeMenu.vue';
 import AddChannelModal from './AddChannelModal.vue';
 import AddProjectModal from './AddProjectModal.vue';
-import AgentBrowser from './AgentBrowser.vue';
-import ModalComponent from './ModalComponent.vue';
 
 import { GlobalBus } from '@/services/event-bus';
 import { Toast } from '@/utils/toast';
@@ -253,7 +236,6 @@ const showChannelModal = ref(false);
 const showProjectModal = ref(false);
 const showInviteModal = ref(false);
 const showIdentity = ref(false);
-const showAgentModal = ref(false);
 const showAdvancedSettings = ref(false);
 const isRequestingSOS = ref(false);
 
