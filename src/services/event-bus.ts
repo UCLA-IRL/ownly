@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 
 import type TypedEmitter from 'typed-emitter';
-import type { IChatChannel, IProject, IProjectFile, IAgentChannel } from './types';
+import type { IChatChannel, IProject, IProjectFile } from './types';
 
 
 /**
@@ -41,12 +41,6 @@ export const GlobalBus = new EventEmitter() as TypedEmitter<{
    * The state is stored in _ndnd_conn_state
    */
   'conn-change': () => void;
-
-  /**
-   * Event when agent channels are updated.
-   * @param channels List of agent channels
-   */
-  'agent-channels': (channels: IAgentChannel[]) => void;
 
   /**
    * Event when the active help section changes.
