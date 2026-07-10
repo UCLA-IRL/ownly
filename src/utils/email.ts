@@ -15,7 +15,7 @@ export function convertEmailToName(email: string): string {
   if (!validateEmail(email)) {
     throw new Error('Invalid email address');
   }
-  return encodeURIComponent(email.toLowerCase())
+  return '/ndn/' + encodeURIComponent(email.toLowerCase())
 }
 
 export function convertEmailToNameLegacy(email: string): string {
