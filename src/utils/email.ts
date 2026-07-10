@@ -15,13 +15,7 @@ export function convertEmailToName(email: string): string {
   if (!validateEmail(email)) {
     throw new Error('Invalid email address');
   }
-
-  const parts = email.toLowerCase().split('@');
-  const user = parts[0];
-  const domain = parts[1];
-
-  // Technically @ is not allowed in URI, but NDNd can handle this
-  return `/${domain}/@${user}`;
+  return encodeURIComponent(email.toLowerCase())
 }
 
 export function convertEmailToNameLegacy(email: string): string {
