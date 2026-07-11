@@ -1,10 +1,14 @@
 <template>
   <ModalComponent :show="show && !!wksp" @close="emit('close')">
-    <div class="title is-5 mb-4">Invite people to {{ wksp?.metadata.label }}</div>
+    <div class="title is-5 mb-4">People & access for {{ wksp?.metadata.label }}</div>
 
-    <p>
+    <p v-if="canManageMembers">
       Share the public join link for the traditional flow, or add recipients below to generate
       per-person fast join links. Ownly does not automatically send emails.
+    </p>
+    <p v-else>
+      Share the public join link for the traditional flow. A master owner device must approve
+      access requests and manage per-person fast join links.
     </p>
 
     <div class="invite-link-box mt-3">
@@ -22,43 +26,44 @@
       </div>
     </div>
 
-    <div class="fast-invite-links mt-3">
-      <div class="title is-6 mb-2">Generated fast join links</div>
-      <template v-if="fastInviteLinks.length > 0">
-        <div class="fast-invite-link" v-for="link in fastInviteLinks" :key="link.name">
-          <div class="fast-invite-recipient">
-            <strong>{{ link.email || link.name }}</strong>
-            <span v-if="link.email">{{ link.name }}</span>
+    <template v-if="canManageMembers">
+      <div class="fast-invite-links mt-3">
+        <div class="title is-6 mb-2">Generated fast join links</div>
+        <template v-if="fastInviteLinks.length > 0">
+          <div class="fast-invite-link" v-for="link in fastInviteLinks" :key="link.name">
+            <div class="fast-invite-recipient">
+              <strong>{{ link.email || link.name }}</strong>
+              <span v-if="link.email">{{ link.name }}</span>
+            </div>
+            <code class="select-all">{{ link.href }}</code>
+            <button class="button invitee-list-action" @click="copyFastInviteLink(link)" title="Copy invite link">
+              <FontAwesomeIcon :icon="faCopy" />
+            </button>
           </div>
-          <code class="select-all">{{ link.href }}</code>
-          <button class="button invitee-list-action" @click="copyFastInviteLink(link)" title="Copy invite link">
-            <FontAwesomeIcon :icon="faCopy" />
+        </template>
+        <p v-else class="invite-link-empty">No generated links yet.</p>
+      </div>
+
+      <p class="mt-2">Enter an email address or NDN name below</p>
+
+      <div class="field has-addons mt-2">
+        <div class="control is-expanded">
+          <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
+            @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste" autofocus />
+        </div>
+        <div class="control">
+          <button class="button is-primary" @click="addInvitees(inviteInput)">
+            Add
           </button>
         </div>
-      </template>
-      <p v-else class="invite-link-empty">No generated links yet.</p>
-    </div>
-
-    <p class="mt-2">Enter an email address or NDN name below</p>
-
-    <div class="field has-addons mt-2">
-      <div class="control is-expanded">
-        <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
-          :disabled="!canManageMembers" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste"
-          autofocus />
       </div>
-      <div class="control">
-        <button class="button is-primary" @click="addInvitees(inviteInput)" :disabled="!canManageMembers">
-          Add
-        </button>
-      </div>
-    </div>
+    </template>
 
     <div class="invitee-management">
-      <div class="title is-6 mb-4" v-if="pendingRequests.length > 0">
+      <div class="title is-6 mb-4" v-if="canManageMembers && pendingRequests.length > 0">
         Access Requests ({{ pendingRequests.length }})
       </div>
-      <DynamicScroller class="scroller" :items="pendingRequests" :min-item-size="10" key-field="name">
+      <DynamicScroller v-if="canManageMembers && pendingRequests.length > 0" class="scroller" :items="pendingRequests" :min-item-size="10" key-field="name">
         <template #default="{ item, index, active }">
           <DynamicScrollerItem :item="item" :active="active" :data-index="index" class="invitee-profile">
             <div :class="{
@@ -79,12 +84,10 @@
 
                   <div class="email" v-if="item.email">{{ item.email }}</div>
                 </div>
-                <button class="button invitee-list-action" :disabled="!canManageMembers" @click="acceptRequest(item)"
-                  title="Accept">
+                <button class="button invitee-list-action" @click="acceptRequest(item)" title="Accept">
                   <FontAwesomeIcon :icon="faCheck" />
                 </button>
-                <button class="button invitee-list-action" :disabled="!canManageMembers" @click="denyRequest(item)"
-                  title="Deny">
+                <button class="button invitee-list-action" @click="denyRequest(item)" title="Deny">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
               </div>
@@ -95,7 +98,7 @@
       <div class="title is-6 mb-4">
         People with Access to this Workspace ({{ invitees.length }}<span v-if="pendingInvitees.length > 0"> + {{
           pendingInvitees.length }}</span>)
-        <button class="button invitee-list-action" :disabled="!canManageMembers" @click="pasteInviteeList"
+        <button v-if="canManageMembers" class="button invitee-list-action" @click="pasteInviteeList"
           title="Import invitee profiles from clipboard">
           <FontAwesomeIcon :icon="faClipboard" />
         </button>
@@ -156,17 +159,13 @@
       </DynamicScroller>
     </div>
 
-    <p v-if="!canManageMembers" class="has-text-danger has-text-weight-semibold mt-2">
-      You must use the master owner device to invite or remove members
-    </p>
-
     <div class="field has-text-right mt-2">
       <div class="control">
         <button class="button mr-2" @click="emit('close')">
           {{ pendingInvitees.length > 0 ? 'Cancel' : 'Close' }}
         </button>
-        <button class="button is-primary soft-if-dark mr-2" @click="send"
-          :disabled="!canManageMembers || pendingInvitees.length == 0">
+        <button v-if="canManageMembers" class="button is-primary soft-if-dark mr-2" @click="send"
+          :disabled="pendingInvitees.length == 0">
           Invite
         </button>
       </div>
