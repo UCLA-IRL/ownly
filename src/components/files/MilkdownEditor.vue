@@ -62,6 +62,21 @@ function logDuration(label: string, started: number) {
   console.debug(`${label}: ${(performance.now() - started).toFixed(1)}ms`);
 }
 
+function displayUrl(url: string): string {
+  if (url.startsWith('data:')) {
+    const mime = url.slice(0, url.indexOf(';') > 0 ? url.indexOf(';') : 32);
+    return `${mime};base64,... (${url.length} chars)`;
+  }
+  if (url.length > 120) {
+    return `${url.slice(0, 117)}...`;
+  }
+  return url;
+}
+
+function isDirectUrl(url: string): boolean {
+  return /^(data|blob|https?):/i.test(url);
+}
+
 watch(
   () => props.yxml,
   async () => {
@@ -96,7 +111,13 @@ const onUpload = async (file: File): Promise<string> => {
 
 const proxyDomURL = async (url: string): Promise<string> => {
   const started = performance.now();
-  const label = timingLabel(`image sync ${url}`);
+  const label = timingLabel(`image sync ${displayUrl(url)}`);
+
+  if (isDirectUrl(url)) {
+    logDuration(`${label} direct URL`, started);
+    return url;
+  }
+
   const existingUrl = objectURLs.get(url);
   if (existingUrl) {
     logDuration(`${label} cache hit`, started);
