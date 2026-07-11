@@ -1,9 +1,12 @@
 <template>
-  <div ref="outer" class="outer"></div>
+  <div class="editor-shell">
+    <LoadingSpinner v-if="loading" class="absolute-center" text="Loading document editor ..." />
+    <div ref="outer" class="outer" :class="{ 'is-loading': loading }"></div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, useTemplateRef, watch, type PropType } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch, type PropType } from 'vue';
 import { useRouter } from 'vue-router';
 
 import * as Y from 'yjs';
@@ -22,6 +25,7 @@ import * as utils from '@/utils';
 import { useThemeWatch } from '@/utils';
 import type { WorkspaceProj } from '@/services/workspace-proj';
 import * as pathjs from 'path-browserify';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
 
 const props = defineProps({
   yxml: {
@@ -45,6 +49,7 @@ let crepe: Crepe | null = null;
 let collabService: CollabService | null = null;
 let opfsPath: string | null = null;
 let proj: WorkspaceProj | null = null;
+const loading = ref(true);
 const objectURLs: Map<string, string> = new Map();
 let unwatchTheme: (() => void) | null = null;
 const MILKDOWN_THEME_LINK_ID = 'ownly-milkdown-theme';
@@ -80,6 +85,12 @@ const proxyDomURL = async (url: string): Promise<string> => {
   if (existingUrl) {
     return existingUrl;
   }
+
+  if (!proj || !opfsPath) {
+    throw new Error('Project filesystem is not ready');
+  }
+
+  await proj.syncFs({ path: url });
   const handle = await opfs.getFileHandle(pathjs.join(opfsPath!, url));
   const file = await handle.getFile();
   const ret = URL.createObjectURL(file);
@@ -88,52 +99,57 @@ const proxyDomURL = async (url: string): Promise<string> => {
 };
 
 async function create() {
-  proj = await Workspace.setupAndGetActiveProj(router);
-  opfsPath = await proj.syncFs();
+  loading.value = true;
+  try {
+    proj = await Workspace.setupAndGetActiveProj(router);
+    opfsPath = proj.getFsBasePath();
 
-  crepe = new Crepe({
-    root: outer.value!,
-    features: {
-      [Crepe.Feature.ImageBlock]: true,
-    },
-    featureConfigs: {
-      [Crepe.Feature.ImageBlock]: {
-        onUpload: onUpload,
-        proxyDomURL: proxyDomURL,
+    crepe = new Crepe({
+      root: outer.value!,
+      features: {
+        [Crepe.Feature.ImageBlock]: true,
       },
-    },
-  });
-  crepe.editor.use(collab);
-  await crepe.create();
+      featureConfigs: {
+        [Crepe.Feature.ImageBlock]: {
+          onUpload: onUpload,
+          proxyDomURL: proxyDomURL,
+        },
+      },
+    });
+    crepe.editor.use(collab);
+    await crepe.create();
 
-  crepe.editor.action((ctx) => {
-    // Connect to the collab service
-    collabService = ctx.get(collabServiceCtx);
-    collabService.bindXmlFragment(props.yxml).setAwareness(props.awareness).connect();
+    crepe.editor.action((ctx) => {
+      // Connect to the collab service
+      collabService = ctx.get(collabServiceCtx);
+      collabService.bindXmlFragment(props.yxml).setAwareness(props.awareness).connect();
 
-    // Add a space after pasting a link. This prevents the link from being written
-    // over when you type after the link. Do the same thing when pressing space after link.
-    const view = ctx.get(editorViewCtx);
+      // Add a space after pasting a link. This prevents the link from being written
+      // over when you type after the link. Do the same thing when pressing space after link.
+      const view = ctx.get(editorViewCtx);
 
-    const handleLinkSpace = async (event?: KeyboardEvent) => {
-      await nextTick();
+      const handleLinkSpace = async (event?: KeyboardEvent) => {
+        await nextTick();
 
-      const { $from } = view.state.selection;
-      if ($from.marks().some((mark) => mark.type.name === 'link')) {
-        // Insert a new element after the link
-        view.dispatch(view.state.tr.insert($from.pos, view.state.schema.text(' ')));
+        const { $from } = view.state.selection;
+        if ($from.marks().some((mark) => mark.type.name === 'link')) {
+          // Insert a new element after the link
+          view.dispatch(view.state.tr.insert($from.pos, view.state.schema.text(' ')));
 
-        // Prevent the space from being written
-        event?.preventDefault();
-      }
-    };
+          // Prevent the space from being written
+          event?.preventDefault();
+        }
+      };
 
-    view.dom.addEventListener('paste', () => handleLinkSpace());
-    view.dom.addEventListener('keydown', (e) => e.key === ' ' && handleLinkSpace(e));
-  });
+      view.dom.addEventListener('paste', () => handleLinkSpace());
+      view.dom.addEventListener('keydown', (e) => e.key === ' ' && handleLinkSpace(e));
+    });
 
-  applyThemeToEditor();
-  unwatchTheme = useThemeWatch(applyThemeToEditor);
+    applyThemeToEditor();
+    unwatchTheme = useThemeWatch(applyThemeToEditor);
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function destroy() {
@@ -172,6 +188,19 @@ function applyThemeToEditor() {
 </script>
 
 <style scoped lang="scss">
+.editor-shell {
+  position: relative;
+  height: 100%;
+}
+
+.outer {
+  height: 100%;
+
+  &.is-loading {
+    opacity: 0;
+  }
+}
+
 .outer :deep(.milkdown) {
   height: 100%;
   overflow-y: scroll;
