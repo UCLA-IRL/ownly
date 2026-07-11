@@ -311,11 +311,19 @@ async function create() {
   let newContentBlob: IBlobVersion | null = null;
   let newContentExcalidrawElements: ExcalidrawElementYMap | null = null;
   let newContentExcalidrawFiles: ExcalidrawFilesYMap | null = null;
+  const openLabel = `[ProjectFileView] open ${filepath.value}`;
+  const openStarted = performance.now();
+
+  const logStep = (step: string, stepStarted: number) => {
+    console.debug(`${openLabel} ${step}: ${(performance.now() - stepStarted).toFixed(1)}ms`);
+  };
 
   try {
     loading.value = true;
 
+    let stepStarted = performance.now();
     const wksp = await Workspace.setupOrRedir(router);
+    logStep('workspace setup', stepStarted);
     if (!wksp) throw new Error('Workspace not found');
 
     localViewerName.value = wksp.username ?? '';
@@ -328,15 +336,24 @@ async function create() {
       const projName = router.currentRoute.value.params.project as string;
       if (!projName) throw new Error('No project name provided');
 
+      stepStarted = performance.now();
       newProj = await wksp.proj.get(projName);
+      logStep('project get', stepStarted);
+
+      stepStarted = performance.now();
       await newProj.activate();
+      logStep('project activate', stepStarted);
     }
 
+    stepStarted = performance.now();
     if (proj.value?.uuid !== newProj.uuid) await destroy();
+    logStep('previous editor teardown', stepStarted);
     proj.value = newProj;
 
     // Load file metadata
+    stepStarted = performance.now();
     const metadata = proj.value.getFileMeta(filepath.value);
+    logStep('file metadata lookup', stepStarted);
     if (!metadata) throw new Error(`File not found: ${filepath.value}`);
 
     // Update tab name
@@ -348,22 +365,36 @@ async function create() {
     // Load file content
     if (metadata.is_blob) {
       // Blob file, the doc contains the version list
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('blob doc load', stepStarted);
       newContentBlob = newDoc.getArray<IBlobVersion>('blobs').get(0);
       if (!newContentBlob) Toast.warning('Empty blob file opened');
     } else if (utils.isExtensionType(basename, 'code')) {
       // Text file content
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('code doc load', stepStarted);
+
+      stepStarted = performance.now();
       newAwareness = await proj.value.getAwareness(filepath.value);
+      logStep('code awareness load', stepStarted);
       newContentCode = newDoc.getText('text');
     } else if (utils.isExtensionType(basename, 'milkdown')) {
       // Milkdown XML fragment content
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('rich doc load', stepStarted);
+
+      stepStarted = performance.now();
       newAwareness = await proj.value.getAwareness(filepath.value);
+      logStep('rich doc awareness load', stepStarted);
       newContentMilk = newDoc.getXmlFragment('milkdown');
     } else if (utils.isExtensionType(basename, 'excalidraw')) {
       // Excalidraw JSON content. We handle elements and files, but leave appstate.
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('excalidraw doc load', stepStarted);
       newContentExcalidrawElements = newDoc.getMap('elements');
       newContentExcalidrawFiles = newDoc.getMap('files');
     } else {
@@ -387,11 +418,16 @@ async function create() {
     //
     // Test in case: rename an open file and open it - the path changes but
     // the underlying document is the same
-    if (contentDoc.value?.guid === newDoc.guid) return;
+    if (contentDoc.value?.guid === newDoc.guid) {
+      console.debug(`${openLabel} same document reused: ${(performance.now() - openStarted).toFixed(1)}ms total`);
+      return;
+    }
 
     // Do the reset synchronously so that the UI does not refresh
     // This means that there will be no flicker and the PDF will stay.
+    stepStarted = performance.now();
     resetDoc();
+    logStep('view reset', stepStarted);
     contentDoc.value = newDoc;
     awareness.value = newAwareness;
     contentCode.value = newContentCode;
@@ -399,6 +435,7 @@ async function create() {
     contentExcalidrawElements.value = newContentExcalidrawElements;
     contentExcalidrawFiles.value = newContentExcalidrawFiles;
     contentBlob.value = newContentBlob;
+    console.debug(`${openLabel} ready: ${(performance.now() - openStarted).toFixed(1)}ms total`);
   } catch (err) {
     console.error(err);
     Toast.error(`Failed to load file: ${err}`);

@@ -54,6 +54,14 @@ const objectURLs: Map<string, string> = new Map();
 let unwatchTheme: (() => void) | null = null;
 const MILKDOWN_THEME_LINK_ID = 'ownly-milkdown-theme';
 
+function timingLabel(action: string) {
+  return `[MilkdownEditor] ${action} ${props.path}`;
+}
+
+function logDuration(label: string, started: number) {
+  console.debug(`${label}: ${(performance.now() - started).toFixed(1)}ms`);
+}
+
 watch(
   () => props.yxml,
   async () => {
@@ -71,18 +79,27 @@ onBeforeUnmount(() => {
 });
 
 const onUpload = async (file: File): Promise<string> => {
+  const started = performance.now();
+  const label = timingLabel(`upload ${file.name}`);
   const parts = props.path.split('/').filter(Boolean);
   const baseFolder = parts.slice(0, -1).join('/');
   const url = `${baseFolder}/${file.name}`;
-  await proj?.importFile(url, file.stream());
-  await new Promise((r) => setTimeout(r, 100)); // Otherwise the image won't load
-  await proj?.syncFs({ path: url });
-  return url;
+  try {
+    await proj?.importFile(url, file.stream());
+    await new Promise((r) => setTimeout(r, 100)); // Otherwise the image won't load
+    await proj?.syncFs({ path: url });
+    return url;
+  } finally {
+    logDuration(label, started);
+  }
 };
 
 const proxyDomURL = async (url: string): Promise<string> => {
+  const started = performance.now();
+  const label = timingLabel(`image sync ${url}`);
   const existingUrl = objectURLs.get(url);
   if (existingUrl) {
+    logDuration(`${label} cache hit`, started);
     return existingUrl;
   }
 
@@ -95,15 +112,24 @@ const proxyDomURL = async (url: string): Promise<string> => {
   const file = await handle.getFile();
   const ret = URL.createObjectURL(file);
   objectURLs.set(url, ret);
+  logDuration(label, started);
   return ret;
 };
 
 async function create() {
+  const label = timingLabel('create');
+  const started = performance.now();
   loading.value = true;
   try {
+    let stepStarted = performance.now();
     proj = await Workspace.setupAndGetActiveProj(router);
-    opfsPath = proj.getFsBasePath();
+    logDuration(`${label} active project`, stepStarted);
 
+    stepStarted = performance.now();
+    opfsPath = proj.getFsBasePath();
+    logDuration(`${label} OPFS base path`, stepStarted);
+
+    stepStarted = performance.now();
     crepe = new Crepe({
       root: outer.value!,
       features: {
@@ -117,8 +143,13 @@ async function create() {
       },
     });
     crepe.editor.use(collab);
-    await crepe.create();
+    logDuration(`${label} crepe configure`, stepStarted);
 
+    stepStarted = performance.now();
+    await crepe.create();
+    logDuration(`${label} crepe create`, stepStarted);
+
+    stepStarted = performance.now();
     crepe.editor.action((ctx) => {
       // Connect to the collab service
       collabService = ctx.get(collabServiceCtx);
@@ -147,6 +178,8 @@ async function create() {
 
     applyThemeToEditor();
     unwatchTheme = useThemeWatch(applyThemeToEditor);
+    logDuration(`${label} collab bind`, stepStarted);
+    logDuration(`${label} ready`, started);
   } finally {
     loading.value = false;
   }
