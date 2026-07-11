@@ -5,6 +5,7 @@ import SpaceDiscussView from '@/views/SpaceDiscussView.vue';
 import SpaceProjectView from '@/views/SpaceProjectView.vue';
 import ProjectFileView from '@/views/ProjectFileView.vue';
 import AboutView from '@/views/AboutView.vue';
+import HelpView from '@/views/HelpView.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -43,6 +44,11 @@ const router = createRouter({
       path: '/about',
       name: 'about',
       component: AboutView,
+    },
+    {
+      path: '/help',
+      name: 'help',
+      component: HelpView,
     },
     {
       path: '/:pathMatch(.*)*',

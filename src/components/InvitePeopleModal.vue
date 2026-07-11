@@ -26,10 +26,17 @@
 
     <p class="mt-2">Enter an email address or NDN name below</p>
 
-    <div class="field mt-2">
-      <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
-        :disabled="!canManageMembers" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste"
-        autofocus />
+    <div class="field has-addons mt-2">
+      <div class="control is-expanded">
+        <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
+          :disabled="!canManageMembers" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste"
+          autofocus />
+      </div>
+      <div class="control">
+        <button class="button is-primary" @click="addInvitees(inviteInput)" :disabled="!canManageMembers">
+          Add
+        </button>
+      </div>
     </div>
 
     <div class="invitee-management">
@@ -140,7 +147,9 @@
 
     <div class="field has-text-right mt-2">
       <div class="control">
-        <button class="button mr-2" @click="emit('close')">Cancel</button>
+        <button class="button mr-2" @click="emit('close')">
+          {{ pendingInvitees.length > 0 ? 'Cancel' : 'Close' }}
+        </button>
         <button class="button is-primary soft-if-dark mr-2" @click="send"
           :disabled="!canManageMembers || pendingInvitees.length == 0">
           Invite
@@ -406,7 +415,7 @@ function addRequest(invitee: string) {
     }
 
     // Convert email to NDN name
-    const ndnName = utils.convertEmailToNameLegacy(entry);
+    const ndnName = utils.convertEmailToName(entry);
 
     // Form profile
     new_profile = { name: ndnName, email: entry };

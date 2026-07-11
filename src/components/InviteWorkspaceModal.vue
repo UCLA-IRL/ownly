@@ -93,6 +93,9 @@ async function invite(ws: IWkspStats) {
 
     const wksp = await Workspace.setup(ws.name);
     if (!wksp) return;
+    if (!wksp.metadata.owner) {
+      throw new Error('You do not have permission to invite users to this workspace');
+    }
 
     await wksp.invite.invite(name.value);
     Toast.success(`Invited user to workspace ${ws.label}`);

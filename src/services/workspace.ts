@@ -1,7 +1,6 @@
 import { WorkspaceChat } from './workspace-chat';
 import { WorkspaceProj, WorkspaceProjManager } from './workspace-proj';
 import { WorkspaceInviteManager } from './workspace-invite';
-import {WorkspaceAgentManager} from './workspace-agent'
 
 import ndn from '@/services/ndn';
 import { SvsProvider } from '@/services/svs-provider';
@@ -50,7 +49,6 @@ export class Workspace {
     public readonly chat: WorkspaceChat,
     public readonly proj: WorkspaceProjManager,
     public readonly invite: WorkspaceInviteManager,
-    public readonly agent: WorkspaceAgentManager | null,
   ) {}
 
   private currentDeviceIdentity(): string {
@@ -82,6 +80,12 @@ export class Workspace {
         metadata.ignore,
       );
       await api.start();
+
+      const owner = await ndn.api.is_workspace_owner(metadata.name);
+      if (metadata.owner !== owner) {
+        metadata.owner = owner;
+        await _o.stats.put(metadata.name, metadata);
+      }
 
       // Wait until user key is ready before proceeding; toast follows route changes.
       const certToast = Toast.loading('Waiting for certificate issuance. You may quit while waiting for workspace creators to respond...');
@@ -137,8 +141,7 @@ export class Workspace {
       }
 
 
-      // Create workspace object first (without agent)
-      const workspace = new Workspace(metadata, api, provider, chat, proj, invite, null);
+      const workspace = new Workspace(metadata, api, provider, chat, proj, invite);
       invite.setOnOwnerSessionAdvanced(async () => {
         await workspace.republishEncryptedState();
       });
@@ -154,12 +157,6 @@ export class Workspace {
           await invite.resetGroupMlsState();
         });
       }
-
-      // Then create agent with workspace reference
-      const agent = await WorkspaceAgentManager.create(api, provider, workspace);
-
-      // Update workspace with agent
-      (workspace as any).agent = agent;
 
       return workspace;
     } catch (e) {
@@ -184,9 +181,6 @@ export class Workspace {
     this.seenRefreshPings.clear();
 
     await this.provider?.destroy();
-    if (this.agent) {
-      await this.agent.destroy();
-    }
     await this.api?.stop();
     await this.invite.destroy();
 

@@ -44,6 +44,22 @@
             >
           </li>
           <li>
+            <router-link to="/help">
+              <FontAwesomeIcon class="mr-1" :icon="faLightbulb" size="sm" />
+              Getting Started</router-link
+            >
+            <ul v-if="route.name === 'help'" class="menu-list help-toc">
+              <li v-for="item in helpTocItems" :key="item.id">
+                <a
+                  :class="{ 'is-active': activeHelpSection === item.id }"
+                  @click="scrollToHelp(item.id)"
+                >
+                  {{ item.label }}
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li>
             <a href="https://github.com/pulsejet/ownly" target="_blank">
               <FontAwesomeIcon class="mr-1" :icon="faGithub" size="sm" />
               GitHub
@@ -112,22 +128,12 @@
           </li>
         </ul>
 
-        <p class="menu-label">AI Agents</p>
-        <ul class="menu-list">
-          <li>
-            <a @click="showAgentModal = true">
-              <FontAwesomeIcon class="mr-1" :icon="faRobot" size="sm" />
-              Manage agents
-            </a>
-          </li>
-        </ul>
-
         <p class="menu-label">Workspace</p>
         <ul class="menu-list">
           <li>
             <a @click="showInviteModal = true">
-              <FontAwesomeIcon class="mr-1" :icon="faPlus" size="sm" />
-              Invite people
+              <FontAwesomeIcon class="mr-1" :icon="faUsers" size="sm" />
+              People & access
 
               <FontAwesomeIcon v-show="showNotifBubble" class="mr-1" :icon="faCircleExclamation" size="sm"></FontAwesomeIcon>
             </a>
@@ -232,10 +238,6 @@
     <AddProjectModal :show="showProjectModal" @close="showProjectModal = false" />
     <InvitePeopleModal :show="showInviteModal" @close="showInviteModal = false" />
     <QrModal :show="showIdentity" @close="showIdentity = false" />
-
-    <ModalComponent :show="showAgentModal" @close="showAgentModal = false">
-      <AgentBrowser />
-    </ModalComponent>
   </aside>
 </template>
 
@@ -252,12 +254,13 @@ import {
   faTableCells,
   faQrcode,
   faCircleInfo,
-  faRobot,
+  faLightbulb,
   faCircleExclamation,
   faArrowsRotate,
   faGear,
   faMoon,
   faSun,
+  faUsers,
 } from '@fortawesome/free-solid-svg-icons';
 import { faGithub } from '@fortawesome/free-brands-svg-icons';
 
@@ -265,8 +268,6 @@ import ProjectTree from './ProjectTree.vue';
 import ProjectTreeMenu from './ProjectTreeMenu.vue';
 import AddChannelModal from './AddChannelModal.vue';
 import AddProjectModal from './AddProjectModal.vue';
-import AgentBrowser from './AgentBrowser.vue';
-import ModalComponent from './ModalComponent.vue';
 
 import { GlobalBus } from '@/services/event-bus';
 import { Toast } from '@/utils/toast';
@@ -277,7 +278,7 @@ import QrModal from './QrModal.vue';
 
 const route = useRoute();
 const routeIsDashboard = computed(() =>
-  ['dashboard', 'join', 'about'].includes(String(route.name)),
+  ['dashboard', 'join', 'about', 'help'].includes(String(route.name)),
 );
 const routeIsWorkspace = computed(() =>
   ['space-home', 'project', 'discuss', 'project-file'].includes(String(route.name)),
@@ -288,7 +289,6 @@ const showChannelModal = ref(false);
 const showProjectModal = ref(false);
 const showInviteModal = ref(false);
 const showIdentity = ref(false);
-const showAgentModal = ref(false);
 const showAdvancedSettings = ref(false);
 const isResettingMls = ref(false);
 const isRequestingSOS = ref(false);
@@ -309,6 +309,22 @@ const projectFiles = ref([] as IProjectFile[]);
 
 const connState = ref(globalThis._ndnd_conn_state);
 
+const helpTocItems = [
+  { id: 'creating-workspace', label: 'Creating a Workspace' },
+  { id: 'joining-workspace', label: 'Joining a Workspace' },
+  { id: 'inviting-others', label: 'Inviting Others' },
+];
+const activeHelpSection = ref('creating-workspace');
+
+function scrollToHelp(id: string) {
+  activeHelpSection.value = id;
+  window.location.hash = id;
+  const el = document.getElementById(id);
+  if (el) {
+    el.scrollIntoView({ behavior: 'auto' });
+  }
+}
+
 const busListeners = {
   'project-list': (projs: IProject[]) => (projects.value = projs),
   'project-files': (name: string, files: IProjectFile[]) => {
@@ -321,6 +337,9 @@ const busListeners = {
     if (!connState.value.connected) {
       Toast.info('Disconnected - you are offline');
     }
+  },
+  'help-toc-active': (id: string) => {
+    activeHelpSection.value = id;
   },
 };
 
@@ -363,6 +382,7 @@ onMounted(async () => {
   GlobalBus.addListener('project-files', busListeners['project-files']);
   GlobalBus.addListener('chat-channels', busListeners['chat-channels']);
   GlobalBus.addListener('conn-change', busListeners['conn-change']);
+  GlobalBus.addListener('help-toc-active', busListeners['help-toc-active']);
   interval = setInterval(() => {
     setNotification();
     syncOwnerDevices();
@@ -379,6 +399,7 @@ onUnmounted(() => {
   GlobalBus.removeListener('project-files', busListeners['project-files']);
   GlobalBus.removeListener('chat-channels', busListeners['chat-channels']);
   GlobalBus.removeListener('conn-change', busListeners['conn-change']);
+  GlobalBus.removeListener('help-toc-active', busListeners['help-toc-active']);
   clearInterval(interval);
   preferredDark?.removeEventListener('change', onThemeMediaChange);
 });
@@ -1026,6 +1047,50 @@ async function resetMlsState() {
   &:hover .sidebar-resizer::before,
   &.resizing .sidebar-resizer::before {
     background: rgba(255, 255, 255, 0.22);
+  }
+
+  .help-toc {
+    list-style: none;
+    margin: 4px 0px 4px 10px;
+    padding: 0 0 0 16px;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+    position: relative;
+
+    li {
+      margin: 0;
+      padding: 0;
+      position: relative;
+
+      a {
+        display: block;
+        padding: 6px 10px;
+        font-size: 0.85rem;
+        color: rgba(255, 255, 255, 0.8);
+        text-decoration: none;
+        border-radius: 6px;
+        position: relative;
+
+        &:hover {
+          background: rgba(255, 255, 255, 0.06);
+        }
+
+        &.is-active {
+          background: rgba(255, 255, 255, 0.08);
+          color: white;
+
+          &::before {
+            content: '';
+            position: absolute;
+            left: -17px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            border-radius: 6px;
+            background: var(--sidebar-highlight-bg);
+          }
+        }
+      }
+    }
   }
 }
 </style>
