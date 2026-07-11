@@ -3,12 +3,27 @@
     <div class="title is-5 mb-4">Invite people to {{ wksp?.metadata.label }}</div>
 
     <p>
-      A fast join link will be generated for each recipient. Note that Ownly does not automatically
-      send any emails &ndash; you must send each generated link directly to its recipient.
+      Share the public join link for the traditional flow, or add recipients below to generate
+      per-person fast join links. Ownly does not automatically send emails.
     </p>
 
+    <div class="invite-link-box mt-3">
+      <div class="title is-6 mb-2">Public join link</div>
+      <div class="invite-link-row">
+        <code class="select-all link">{{ inviteLink || 'Generating link...' }}</code>
+        <button
+          class="button invitee-list-action"
+          @click="copyInviteLink"
+          :disabled="!inviteLink"
+          title="Copy public join link"
+        >
+          <FontAwesomeIcon :icon="faCopy" />
+        </button>
+      </div>
+    </div>
+
     <div class="fast-invite-links mt-3">
-      <div class="title is-6 mb-2">Generated invite links</div>
+      <div class="title is-6 mb-2">Generated fast join links</div>
       <template v-if="fastInviteLinks.length > 0">
         <div class="fast-invite-link" v-for="link in fastInviteLinks" :key="link.name">
           <div class="fast-invite-recipient">
@@ -190,6 +205,7 @@ const emit = defineEmits(['close']);
 const router = useRouter();
 
 const wksp = shallowRef<Workspace | null>(null);
+const inviteLink = ref(String());
 const inviteInput = ref(String())
 const canManageMembers = computed(() =>
   !!wksp.value?.metadata.owner && !!wksp.value?.invite.isMasterDevice(),
@@ -234,6 +250,7 @@ watch(
     wksp.value = await Workspace.setupOrRedir(router);
     if (!wksp.value) return;
 
+    inviteLink.value = String();
     invitees.value = wksp.value.invite.getInviteArray();
     pendingInvitees.value.length = 0; // clear pending invitees
     pendingRequests.value.length = 0;
@@ -242,6 +259,7 @@ watch(
       if (wksp.value?.metadata.name == requester[0] && !requester[2]) // requester[2] is false if request has not been dealt with yet
         addRequest(requester[1]);
     })
+    inviteLink.value = await wksp.value.invite.getJoinLink(router);
     members.value = await wksp.value.getMembers();
   },
 );
@@ -264,6 +282,12 @@ async function copyInviteeList() {
 async function copyFastInviteLink(link: { name: string; email?: string; href: string }) {
   await navigator.clipboard.writeText(link.href);
   Toast.success(`Copied invite link for ${link.email || link.name}`);
+}
+
+async function copyInviteLink() {
+  if (!inviteLink.value) return;
+  await navigator.clipboard.writeText(inviteLink.value);
+  Toast.success('Public join link copied to clipboard!');
 }
 
 const resendingInvite = ref<string | null>(null);
@@ -488,7 +512,7 @@ async function send() {
   // Publish invitations and create per-invitee fast join links.
   for (const invitee of pendingInvitees.value) {
     try {
-      const href = await wksp.value.invite.tryFastInvite(invitee, router);
+      const href = await wksp.value.invite.tryInviteWithFastJoin(invitee, router);
       generatedLinks.push({ name: invitee.name, email: invitee.email, href });
       invitees.value.push(invitee);
     } catch (err) {
@@ -517,13 +541,41 @@ async function send() {
   resize: none;
 }
 
+.invite-link-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
+
+  .invite-link-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2rem;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: transparent;
+    padding: 0;
+  }
+}
+
+.invitee-list-action {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  align-self: center;
+}
+
 .invitee-management {
   .invitee-list-action {
     float: right;
-    width: 2rem;
-    height: 2rem;
-    border-radius: 50%;
-    align-self: center;
   }
 
   .scroller {

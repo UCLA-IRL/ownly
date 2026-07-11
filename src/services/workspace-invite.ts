@@ -840,6 +840,26 @@ export class WorkspaceInviteManager {
     }
   }
 
+  public async tryInviteWithFastJoin(invitee: IProfile, router: Router): Promise<string> {
+    if (!this.wsmeta.owner) throw new Error('Only owner can invite');
+
+    await this.bootstrapOwnerMls();
+
+    if (this.inviteeProfiles.has(invitee.name)) {
+      throw new Error(`Invitation for ${invitee.name} already exists`);
+    }
+
+    this.inviteeProfiles.set(invitee.name, invitee);
+    try {
+      await this.invite(invitee.name);
+      const invitation = await this.api.make_fast_join_invitation(invitee.name);
+      return this.getFastJoinLink(router, invitation);
+    } catch (err) {
+      this.inviteeProfiles.delete(invitee.name);
+      throw err;
+    }
+  }
+
   /**
    * Regenerate the fast-join link for an existing invitee (pending or
    * already-joined member). The owner can use this to resend a lost link
