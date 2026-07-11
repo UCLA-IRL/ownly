@@ -31,6 +31,7 @@
     "@zip.js/zip.js": "^2.7.57",
     "bulma": "^1.0.3",
     "dexie": "^4.0.11",
+    "dompurify": "^3.4.11",
     "events": "^3.3.0",
     "file-system-access": "^1.0.4",
     "highlight.js": "^11.11.1",

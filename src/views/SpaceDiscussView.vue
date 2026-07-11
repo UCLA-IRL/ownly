@@ -46,7 +46,7 @@
                     <span class="time">{{ formatTime(item) }}</span>
                   </div>
 
-                  <div class="content" v-html="marked(item.message)"></div>
+                  <div class="content" v-html="renderMessage(item.message)"></div>
                 </div>
               </div>
             </div>
@@ -107,7 +107,7 @@ import * as utils from '@/utils';
 import { Toast } from '@/utils/toast';
 
 import type { IChatMessage } from '@/services/types';
-import { marked } from 'marked';
+import { renderMarkdownSync } from '@/utils/sanitize';
 import 'highlight.js/styles/vs.min.css';
 
 const route = useRoute();
@@ -192,6 +192,10 @@ function formatTime(item: IChatMessage) {
 
 function displayUserName(name: string) {
   return utils.stripNdnPrefixForDisplay(name);
+}
+
+function renderMessage(message: string) {
+  return renderMarkdownSync(message);
 }
 
 /** Send a message to the workspace */

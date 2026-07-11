@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch, type PropType } from 'vue';
 
 import * as Y from 'yjs';
 import Reveal from 'reveal.js';
@@ -13,10 +13,14 @@ import Highlight from 'reveal.js/plugin/highlight/highlight.esm.js';
 import 'reveal.js/dist/reveal.css';
 import 'reveal.js/dist/theme/solarized.css';
 import { debounce } from 'lodash-es';
+import { escapeHtml, sanitizeHtml } from '@/utils/sanitize';
 
 const mdText = ref('');
 const mdHtml = ref('');
 const revealDeck = ref(null as Reveal.Api | null);
+const revealviewer = useTemplateRef('revealviewer');
+let active = false;
+let renderSeq = 0;
 
 const props = defineProps({
   ytext: {
@@ -29,43 +33,65 @@ const props = defineProps({
   },
 });
 
-const debouncedRefresh = async () => {
+const refreshDeck = async (seq: number) => {
+  if (!active || seq !== renderSeq || !revealviewer.value) return;
+
   const state = revealDeck.value?.getState();
   revealDeck.value?.destroy();
-  revealDeck.value = new Reveal({
+  const deck = new Reveal({
     embedded: true,
     slideNumber: true,
     plugins: [Markdown, Highlight],
+    markdown: {
+      sanitize: true,
+      sanitizer: sanitizeHtml,
+    },
     transition: 'none',
   });
-  await revealDeck.value.initialize();
+  revealDeck.value = deck;
+  await deck.initialize();
+  if (!active || seq !== renderSeq) {
+    deck.destroy();
+    return;
+  }
+
   // Scroll to current slide
   if (state) {
-    revealDeck.value.setState(state);
+    deck.setState(state);
   }
 };
 
-const observeText = debounce(async () => {
+const renderSlides = async () => {
+  const seq = ++renderSeq;
   mdText.value = props.ytext.toString();
   mdHtml.value = `<div class="reveal">
       <div class="slides">
         <section data-markdown>
-          <textarea data-template>${mdText.value}</textarea>
+          <textarea data-template>${escapeHtml(mdText.value)}</textarea>
         </section>
       </div>
     </div>`;
   await nextTick();
-  await debouncedRefresh();
+  await refreshDeck(seq);
+};
+
+const observeText = debounce(() => {
+  void renderSlides();
 }, 250);
 
 const create = async () => {
+  active = true;
   props.ytext.observe(observeText);
-  await observeText();
+  await renderSlides();
 };
 
 const destroy = () => {
+  active = false;
+  renderSeq += 1;
+  observeText.cancel();
   props.ytext.unobserve(observeText);
   revealDeck.value?.destroy();
+  revealDeck.value = null;
 };
 
 watch(

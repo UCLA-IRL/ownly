@@ -1,7 +1,7 @@
 <template>
   <div class="pdfviewer" ref="pdfviewer">
     <!-- Loading / Compiling Spinner -->
-    <LoadingSpinner v-if="!loaded && pdf" class="absolute-center" />
+    <LoadingSpinner v-if="!loaded && pdf && !displayError" class="absolute-center" />
 
     <!-- Watermark logo -->
     <img alt="logo" class="logo invert-if-dark" src="@/assets/logo-white.svg" />
@@ -48,16 +48,19 @@
         :source="pdfCopy"
         :width="width"
         @loaded="loaded = true"
+        @loading-failed="handlePdfError"
+        @password-requested="handlePasswordRequest"
+        @rendering-failed="handlePdfError"
       />
     </div>
 
     <!-- Error message -->
-    <div v-if="error" class="error">{{ error }}</div>
+    <div v-if="displayError" class="error">{{ displayError }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, shallowRef, useTemplateRef, watch } from 'vue';
+import { computed, onMounted, ref, shallowRef, useTemplateRef, watch } from 'vue';
 
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 
@@ -101,6 +104,8 @@ const pdfviewer = useTemplateRef('pdfviewer');
 const width = ref(0);
 const loaded = ref(false);
 const pdfCopy = shallowRef<Uint8Array | null>(null);
+const viewerError = ref(String());
+const displayError = computed(() => props.error || viewerError.value);
 
 watch(() => props.pdf, create);
 
@@ -112,9 +117,25 @@ onMounted(() => {
 
 function create() {
   loaded.value = false;
+  viewerError.value = String();
   // Copy the pdf to prevent viewer from destroying the original
   // This is needed for the download button to work
   pdfCopy.value = props.pdf ? new Uint8Array(props.pdf) : null;
+}
+
+function handlePdfError(err: unknown) {
+  loaded.value = true;
+  viewerError.value = `Failed to render PDF: ${formatError(err)}`;
+}
+
+function handlePasswordRequest() {
+  loaded.value = true;
+  viewerError.value = 'Password-protected PDFs are not supported.';
+}
+
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 async function download() {
