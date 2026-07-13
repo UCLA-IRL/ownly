@@ -1144,6 +1144,26 @@ export class WorkspaceInviteManager {
     }
   }
 
+  public async tryInviteWithFastJoin(invitee: IProfile, router: Router): Promise<string> {
+    if (!this.wsmeta.owner) throw new Error('Only owner can invite');
+
+    await this.bootstrapOwnerMls();
+
+    if (this.inviteeProfiles.has(invitee.name)) {
+      throw new Error(`Invitation for ${invitee.name} already exists`);
+    }
+
+    this.inviteeProfiles.set(invitee.name, invitee);
+    try {
+      await this.invite(invitee.name);
+      const invitation = await this.api.make_fast_join_invitation(invitee.name);
+      return this.getFastJoinLink(router, invitation);
+    } catch (err) {
+      this.inviteeProfiles.delete(invitee.name);
+      throw err;
+    }
+  }
+
   /**
    * Regenerate the fast-join link for an existing invitee (pending or
    * already-joined member). The owner can use this to resend a lost link
@@ -1157,43 +1177,6 @@ export class WorkspaceInviteManager {
 
     const invitation = await this.api.make_fast_join_invitation(inviteeName);
     return this.getFastJoinLink(router, invitation);
-  }
-
-  /**
-   * Try to invite an agent to the workspace
-   *
-   * @param invitee Profile of the invitee
-   * @param inviteChannel The channel to assign
-   * @param inviteUrl The external server URL for the agent
-   */
-  public async invokeAgent(inviteChannel: string, inviteUrl: string): Promise<void> {
-    if (!inviteUrl) {
-      console.warn("No inviteUrl provided for agent invite — skipping external request.");
-      return;
-    }
-
-    try {
-      const body = {
-        wkspName: this.wsmeta.name,
-        psk: this.wsmeta.psk,
-        channel: inviteChannel,
-      };
-
-      const response = await fetch(inviteUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server responded with ${response.status} ${response.statusText}`);
-      }
-    } catch (err) {
-      console.error(`Failed to send agent invite to ${inviteUrl}:`, err);
-      throw err; // rethrow so UI can display Toast error
-    }
   }
 
   /**

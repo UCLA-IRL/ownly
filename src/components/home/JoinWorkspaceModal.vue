@@ -6,7 +6,7 @@
       <label class="label">Dashboard Label</label>
       <div class="control">
         <input
-          class="input"
+          class="input soft-if-dark"
           type="text"
           placeholder="Marketing Team"
           v-model="opts.label"
@@ -26,7 +26,7 @@
     <div v-else class="field">
       <label class="label">NDN Name</label>
       <div class="control">
-        <input class="input" type="text" placeholder="/my/awesome/workspace" v-model="opts.name" />
+        <input class="input soft-if-dark" type="text" placeholder="/my/awesome/workspace" v-model="opts.name" />
       </div>
       <p class="help">Unique network identifier of the workspace</p>
     </div>
@@ -34,14 +34,14 @@
     <div v-if="!fastJoin" class="field">
       <label class="label">Pre-Shared Key</label>
       <div class="control">
-        <input class="input" type="text" placeholder="..." v-model="opts.psk" />
+        <input class="input soft-if-dark" type="text" placeholder="..." v-model="opts.psk" />
       </div>
       <p class="help">Ask the owner of the workspace for the key</p>
     </div>
 
     <div class="field has-text-right">
       <div class="control">
-        <button class="button is-light mr-2" :disabled="loading" @click="close">Cancel</button>
+        <button class="button mr-2" :disabled="loading" @click="close">Cancel</button>
         <button class="button is-primary" :disabled="loading" @click="join">Join</button>
       </div>
     </div>

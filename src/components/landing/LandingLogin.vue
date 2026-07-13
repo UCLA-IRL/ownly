@@ -430,7 +430,7 @@ function emailSubmit() {
   // fail outright or produce a testbed key that doesn't chain to the
   // bundle's ephemeral cert.
   if (fastJoinBundle.value) {
-    const predicted = utils.convertEmailToNameLegacy(emailAddress.value);
+    const predicted = utils.convertEmailToName(emailAddress.value);
     if (predicted !== fastJoinBundle.value.inviteeIdentity) {
       emailError.value = `This email produces identity "${predicted}" but the fast-join link designates "${fastJoinBundle.value.inviteeIdentity}". Use a different email or contact the inviter.`;
       return;

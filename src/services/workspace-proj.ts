@@ -172,6 +172,12 @@ export class WorkspaceProj {
     this.onListChange();
   }
 
+  /** Get the OPFS base path for this project without syncing files. */
+  public getFsBasePath(opts?: { useProjectName?: boolean }): string {
+    const basepdir = opts?.useProjectName ? this.name : this.uuid;
+    return `${this.manager.group}/${basepdir}`;
+  }
+
   /** Get the list of files */
   public getFileList(): IProjectFile[] {
     return Array.from(this.fileMap.values());
@@ -512,8 +518,7 @@ export class WorkspaceProj {
 
     // Get the folder in the FS
     prefix = utils.normalizePath(prefix);
-    const basepdir = opts?.useProjectName ? this.name : this.uuid;
-    const basedir = `${this.manager.group}/${basepdir}`;
+    const basedir = this.getFsBasePath(opts);
     const folder = await opfs.getDirectoryHandle(basedir + prefix, { create: true });
 
     // TODO: show progress
@@ -599,8 +604,7 @@ export class WorkspaceProj {
     if (!meta) throw new Error(`File not found: ${path}`);
 
     // Get the file in the FS
-    const basepdir = opts?.useProjectName ? this.name : this.uuid;
-    const basedir = `${this.manager.group}/${basepdir}`;
+    const basedir = this.getFsBasePath(opts);
     const folder = await opfs.getDirectoryHandle(basedir, { create: true });
     const fileHandle = await opfs.getFileHandle(path, { create: true, root: folder });
     if (!fileHandle) throw new Error(`File could not be created: ${path}`);

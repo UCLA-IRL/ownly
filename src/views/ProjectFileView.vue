@@ -283,6 +283,7 @@ const renameValue = ref('');
 const renameInput = useTemplateRef<HTMLInputElement>('renameInput');
 
 let awarenessListener: ((event: { added: number[]; updated: number[]; removed: number[] }, source: 'local' | 'remote') => void) | null = null;
+let openSeq = 0;
 onMounted(create);
 watch(filename, create);
 watch(() => route.params.project, create);
@@ -290,7 +291,7 @@ watch(() => route.params.project, create);
 watch(filename, () => {
   isRenaming.value = false;
 });
-onUnmounted(() => void destroy());
+onUnmounted(() => void destroy({ cancelPendingOpen: true }));
 
 const savedSplit = Number(globalThis.localStorage?.getItem(SPLIT_RATIO_KEY));
 if (Number.isFinite(savedSplit)) {
@@ -303,6 +304,7 @@ mobileActivePane.value = globalThis.localStorage?.getItem(MOBILE_ACTIVE_PANE_KEY
   : 'code';
 
 async function create() {
+  const seq = ++openSeq;
   // If something fails, we should destroy these
   let newDoc: Y.Doc | null = null;
   let newAwareness: awareProto.Awareness | null = null;
@@ -311,11 +313,26 @@ async function create() {
   let newContentBlob: IBlobVersion | null = null;
   let newContentExcalidrawElements: ExcalidrawElementYMap | null = null;
   let newContentExcalidrawFiles: ExcalidrawFilesYMap | null = null;
+  const openLabel = `[ProjectFileView] open ${filepath.value}`;
+  const openStarted = performance.now();
+
+  const logStep = (step: string, stepStarted: number) => {
+    console.debug(`${openLabel} ${step}: ${(performance.now() - stepStarted).toFixed(1)}ms`);
+  };
+  const isCurrentOpen = () => seq === openSeq;
+  const destroyNewDocIfUnused = () => {
+    if (newDoc && newDoc.guid !== contentDoc.value?.guid) {
+      newDoc.destroy();
+    }
+  };
 
   try {
     loading.value = true;
 
+    let stepStarted = performance.now();
     const wksp = await Workspace.setupOrRedir(router);
+    logStep('workspace setup', stepStarted);
+    if (!isCurrentOpen()) return;
     if (!wksp) throw new Error('Workspace not found');
 
     localViewerName.value = wksp.username ?? '';
@@ -328,15 +345,27 @@ async function create() {
       const projName = router.currentRoute.value.params.project as string;
       if (!projName) throw new Error('No project name provided');
 
+      stepStarted = performance.now();
       newProj = await wksp.proj.get(projName);
+      logStep('project get', stepStarted);
+      if (!isCurrentOpen()) return;
+
+      stepStarted = performance.now();
       await newProj.activate();
+      logStep('project activate', stepStarted);
+      if (!isCurrentOpen()) return;
     }
 
+    stepStarted = performance.now();
     if (proj.value?.uuid !== newProj.uuid) await destroy();
+    logStep('previous editor teardown', stepStarted);
+    if (!isCurrentOpen()) return;
     proj.value = newProj;
 
     // Load file metadata
+    stepStarted = performance.now();
     const metadata = proj.value.getFileMeta(filepath.value);
+    logStep('file metadata lookup', stepStarted);
     if (!metadata) throw new Error(`File not found: ${filepath.value}`);
 
     // Update tab name
@@ -348,22 +377,60 @@ async function create() {
     // Load file content
     if (metadata.is_blob) {
       // Blob file, the doc contains the version list
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('blob doc load', stepStarted);
+      if (!isCurrentOpen()) {
+        destroyNewDocIfUnused();
+        return;
+      }
       newContentBlob = newDoc.getArray<IBlobVersion>('blobs').get(0);
       if (!newContentBlob) Toast.warning('Empty blob file opened');
     } else if (utils.isExtensionType(basename, 'code')) {
       // Text file content
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('code doc load', stepStarted);
+      if (!isCurrentOpen()) {
+        destroyNewDocIfUnused();
+        return;
+      }
+
+      stepStarted = performance.now();
       newAwareness = await proj.value.getAwareness(filepath.value);
+      logStep('code awareness load', stepStarted);
+      if (!isCurrentOpen()) {
+        destroyNewDocIfUnused();
+        return;
+      }
       newContentCode = newDoc.getText('text');
     } else if (utils.isExtensionType(basename, 'milkdown')) {
       // Milkdown XML fragment content
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('rich doc load', stepStarted);
+      if (!isCurrentOpen()) {
+        destroyNewDocIfUnused();
+        return;
+      }
+
+      stepStarted = performance.now();
       newAwareness = await proj.value.getAwareness(filepath.value);
+      logStep('rich doc awareness load', stepStarted);
+      if (!isCurrentOpen()) {
+        destroyNewDocIfUnused();
+        return;
+      }
       newContentMilk = newDoc.getXmlFragment('milkdown');
     } else if (utils.isExtensionType(basename, 'excalidraw')) {
       // Excalidraw JSON content. We handle elements and files, but leave appstate.
+      stepStarted = performance.now();
       newDoc = await proj.value.getFile(filepath.value);
+      logStep('excalidraw doc load', stepStarted);
+      if (!isCurrentOpen()) {
+        destroyNewDocIfUnused();
+        return;
+      }
       newContentExcalidrawElements = newDoc.getMap('elements');
       newContentExcalidrawFiles = newDoc.getMap('files');
     } else {
@@ -387,11 +454,16 @@ async function create() {
     //
     // Test in case: rename an open file and open it - the path changes but
     // the underlying document is the same
-    if (contentDoc.value?.guid === newDoc.guid) return;
+    if (contentDoc.value?.guid === newDoc.guid) {
+      console.debug(`${openLabel} same document reused: ${(performance.now() - openStarted).toFixed(1)}ms total`);
+      return;
+    }
 
     // Do the reset synchronously so that the UI does not refresh
     // This means that there will be no flicker and the PDF will stay.
+    stepStarted = performance.now();
     resetDoc();
+    logStep('view reset', stepStarted);
     contentDoc.value = newDoc;
     awareness.value = newAwareness;
     contentCode.value = newContentCode;
@@ -399,15 +471,22 @@ async function create() {
     contentExcalidrawElements.value = newContentExcalidrawElements;
     contentExcalidrawFiles.value = newContentExcalidrawFiles;
     contentBlob.value = newContentBlob;
+    console.debug(`${openLabel} ready: ${(performance.now() - openStarted).toFixed(1)}ms total`);
   } catch (err) {
+    if (!isCurrentOpen()) {
+      destroyNewDocIfUnused();
+      return;
+    }
     console.error(err);
     Toast.error(`Failed to load file: ${err}`);
 
     // Destroy the new doc if it was created
     // This automatically destroys the children
-    newDoc?.destroy();
+    destroyNewDocIfUnused();
   } finally {
-    loading.value = false;
+    if (isCurrentOpen()) {
+      loading.value = false;
+    }
   }
 }
 
@@ -429,7 +508,8 @@ function resetDoc() {
   viewers.value = [];
 }
 
-async function destroy() {
+async function destroy(opts?: { cancelPendingOpen?: boolean }) {
+  if (opts?.cancelPendingOpen) openSeq += 1;
   stopSplitResize();
 
   resetDoc();
@@ -590,14 +670,20 @@ function updateViewers() {
 
 async function compileLatex() {
   if (resultIsCompiling.value) return;
+  const seq = openSeq;
   try {
     resultIsCompiling.value = true;
-    resultPdf.value = await latex.compile(proj.value!);
+    const pdf = await latex.compile(proj.value!);
+    if (seq !== openSeq) return;
+    resultPdf.value = pdf;
     resultError.value = String();
   } catch (err) {
+    if (seq !== openSeq) return;
     resultError.value = `Failed to compile LaTeX\n\n ${err}`;
   } finally {
-    resultIsCompiling.value = false;
+    if (seq === openSeq) {
+      resultIsCompiling.value = false;
+    }
   }
 }
 

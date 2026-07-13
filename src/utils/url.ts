@@ -9,6 +9,28 @@ export function escapeUrlName(input: string) {
 }
 
 /**
+ * Remove the standard /ndn prefix from a workspace or user name for display.
+ * The underlying stored or routed value should remain untouched.
+ */
+export function stripNdnPrefixForDisplay(input: string): string {
+  if (!input) return input;
+
+  const stripped = input.replace(/^\/ndn(?=\/|$)/, '');
+  return stripped || '/';
+}
+
+/**
+ * Restore the hidden /ndn prefix for workspace or user names that are entered
+ * in display form.
+ */
+export function restoreNdnPrefixFromDisplay(input: string): string {
+  if (!input) return input;
+  if (input === '/ndn' || input.startsWith('/ndn/')) return input;
+  if (input.startsWith('/')) return `/ndn${input === '/' ? '' : input}`;
+  return input;
+}
+
+/**
  * Unescape URL parameter to NDN name.
  * @param name Escaped NDN name
  */

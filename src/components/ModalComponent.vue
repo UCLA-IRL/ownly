@@ -2,8 +2,8 @@
   <Teleport to="body">
     <Transition name="fade-2">
       <div class="modal is-active anim-fade" v-if="show || loading">
-        <div class="modal-background"></div>
-        <div class="modal-content" :class="contentClass">
+        <div class="modal-background" @click="emit('close')"></div>
+        <div class="modal-content" :class="contentClass" @click.stop>
           <LoadingSpinner v-if="loading" class="fixed-center" />
 
           <div class="box" v-if="show">
@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, watch } from 'vue';
+import { nextTick, watch, onMounted, onUnmounted } from 'vue';
 
 import LoadingSpinner from '@/components/LoadingSpinner.vue';
 
@@ -38,6 +38,20 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['close']);
+
+function handleEscapeKey(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    emit('close');
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleEscapeKey);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleEscapeKey);
+});
 
 watch(
   () => props.show,

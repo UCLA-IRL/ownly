@@ -572,10 +572,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			// Fetch the content from the network
 			ch := make(chan ndn.ConsumeState)
 			client.ConsumeExt(ndn.ConsumeExtArgs{
-				Name:           name,
-				TryStore:       true,
-				IgnoreValidity: optional.Some(ignoreValidity),
-				Callback:       func(state ndn.ConsumeState) { ch <- state },
+				Name:             name,
+				TryStore:         true,
+				UseSignatureTime: optional.Some(true),
+				IgnoreValidity:   optional.Some(ignoreValidity),
+				Callback:         func(state ndn.ConsumeState) { ch <- state },
 			})
 			state := <-ch
 			if err := state.Error(); err != nil {
@@ -899,16 +900,18 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				InitialState: stateWire,
 
 				Svs: ndn_sync.SvSyncOpts{
-					Client:         client,
-					GroupPrefix:    svsAloGroup,
-					IgnoreValidity: optional.Some(ignoreValidity),
+					Client:           client,
+					GroupPrefix:      svsAloGroup,
+					UseSignatureTime: optional.Some(true),
+					IgnoreValidity:   optional.Some(ignoreValidity),
 				},
 
 				Snapshot: &ndn_sync.SnapshotNodeHistory{
-					Client:         client,
-					Threshold:      SnapshotThreshold,
-					Compress:       a.CompressSnapshotYjs,
-					IgnoreValidity: optional.Some(ignoreValidity),
+					Client:           client,
+					Threshold:        SnapshotThreshold,
+					Compress:         a.CompressSnapshotYjs,
+					UseSignatureTime: optional.Some(true),
+					IgnoreValidity:   optional.Some(ignoreValidity),
 				},
 
 				MulticastPrefix: multicastPrefix,

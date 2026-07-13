@@ -11,8 +11,8 @@
 import { onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue';
 
 import * as Y from 'yjs';
-import { marked } from 'marked';
 import 'highlight.js/styles/vs.min.css';
+import { renderMarkdown } from '@/utils/sanitize';
 
 const mdHtml = ref('');
 const mdText = ref('');
@@ -30,7 +30,7 @@ const props = defineProps({
 
 const observeText = async () => {
   mdText.value = props.ytext.toString();
-  mdHtml.value = await marked.parse(mdText.value);
+  mdHtml.value = await renderMarkdown(mdText.value);
 };
 
 const create = async () => {

@@ -1,11 +1,32 @@
 <template>
   <ModalComponent :show="show && !!wksp" @close="emit('close')">
-    <div class="title is-5 mb-4">Invite people to {{ wksp?.metadata.label }}</div>
+    <div class="title is-5 mb-4">People & access for {{ wksp?.metadata.label }}</div>
 
-    <p>
-      The owner join link can be shared with an owner device that needs to rejoin this workspace.
-      Fast join links are generated for invited recipients. Ownly does not automatically send emails.
+    <p v-if="canManageMembers">
+      Share the public join link for the traditional flow, or add recipients below to generate
+      per-person fast join links. The owner join link can be shared with an owner device that needs
+      to rejoin this workspace. Ownly does not automatically send emails.
     </p>
+    <p v-else>
+      Share the public join link for the traditional flow. The owner join link can be shared with
+      an owner device that needs to rejoin this workspace. A master owner device must approve access
+      requests and manage per-person fast join links.
+    </p>
+
+    <div class="invite-link-box mt-3">
+      <div class="title is-6 mb-2">Public join link</div>
+      <div class="invite-link-row">
+        <code class="select-all link">{{ inviteLink || 'Generating link...' }}</code>
+        <button
+          class="button invitee-list-action"
+          @click="copyInviteLink"
+          :disabled="!inviteLink"
+          title="Copy public join link"
+        >
+          <FontAwesomeIcon :icon="faCopy" />
+        </button>
+      </div>
+    </div>
 
     <div class="fast-invite-links mt-3">
       <div class="title is-6 mb-2">Generated invite links</div>
@@ -24,18 +45,27 @@
       <p v-else class="invite-link-empty">No generated links yet.</p>
     </div>
 
-    <p class="mt-2">Enter an email address or NDN name below</p>
+    <template v-if="canManageMembers">
+      <p class="mt-2">Enter an email address or NDN name below</p>
 
-    <div class="field mt-2">
-      <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
-        :disabled="!canManageMembers" @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste" autofocus />
-    </div>
+      <div class="field has-addons mt-2">
+        <div class="control is-expanded">
+          <input class="input" type="text" :placeholder="`name@example.com or /ndn/user-name`" v-model="inviteInput"
+            @keydown.enter.prevent="addInvitees(inviteInput)" @paste="addInviteesOnPaste" autofocus />
+        </div>
+        <div class="control">
+          <button class="button is-primary" @click="addInvitees(inviteInput)">
+            Add
+          </button>
+        </div>
+      </div>
+    </template>
 
     <div class="invitee-management">
-      <div class="title is-6 mb-4" v-if="pendingRequests.length > 0">
+      <div class="title is-6 mb-4" v-if="canManageMembers && pendingRequests.length > 0">
         Access Requests ({{ pendingRequests.length }})
       </div>
-      <DynamicScroller class="scroller" :items="pendingRequests" :min-item-size="10" key-field="name">
+      <DynamicScroller v-if="canManageMembers && pendingRequests.length > 0" class="scroller" :items="pendingRequests" :min-item-size="10" key-field="name">
         <template #default="{ item, index, active }">
           <DynamicScrollerItem :item="item" :active="active" :data-index="index" class="invitee-profile">
             <div :class="{
@@ -56,12 +86,10 @@
 
                   <div class="email" v-if="item.email">{{ item.email }}</div>
                 </div>
-                <button class="button invitee-list-action" :disabled="!canManageMembers"
-                  @click="acceptRequest(item)" title="Accept">
+                <button class="button invitee-list-action" @click="acceptRequest(item)" title="Accept">
                   <FontAwesomeIcon :icon="faCheck" />
                 </button>
-                <button class="button invitee-list-action" :disabled="!canManageMembers"
-                  @click="denyRequest(item)" title="Deny">
+                <button class="button invitee-list-action" @click="denyRequest(item)" title="Deny">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
               </div>
@@ -72,7 +100,7 @@
       <div class="title is-6 mb-4">
         People with Access to this Workspace ({{ invitees.length }}<span v-if="pendingInvitees.length > 0"> + {{
           pendingInvitees.length }}</span>)
-        <button class="button invitee-list-action" :disabled="!canManageMembers" @click="pasteInviteeList"
+        <button v-if="canManageMembers" class="button invitee-list-action" @click="pasteInviteeList"
           title="Import invitee profiles from clipboard">
           <FontAwesomeIcon :icon="faClipboard" />
         </button>
@@ -113,17 +141,17 @@
                 </div>
 
                 <button class="button invitee-list-action" v-if="canManageMembers && !item.owner"
-                  :disabled="resendingInvite === item.name"
-                  @click="resendInvite(item.name)" title="Generate a new fast-join link for this person">
+                  :disabled="resendingInvite === item.name" @click="resendInvite(item.name)"
+                  title="Generate a new fast-join link for this person">
                   <FontAwesomeIcon :icon="faShare" />
                 </button>
-                <button class="button invitee-list-action" v-if="item.pending"
-                  @click="removeInvitee(item.name)" title="Remove this pending invitee">
+                <button class="button invitee-list-action" v-if="item.pending" @click="removeInvitee(item.name)"
+                  title="Remove this pending invitee">
                   <FontAwesomeIcon :icon="faXmark" />
                 </button>
                 <button class="button invitee-list-action" v-else-if="canManageMembers && !item.owner"
-                  :disabled="removingMember === item.name"
-                  @click="removeExistingMember(item.name)" title="Remove access to this workspace">
+                  :disabled="removingMember === item.name" @click="removeExistingMember(item.name)"
+                  title="Remove access to this workspace">
                   <FontAwesomeIcon :icon="faUserMinus" />
                 </button>
               </div>
@@ -133,15 +161,13 @@
       </DynamicScroller>
     </div>
 
-    <p v-if="!canManageMembers" class="has-text-danger has-text-weight-semibold mt-2">
-      You must use the master owner device to invite or remove members
-    </p>
-
     <div class="field has-text-right mt-2">
       <div class="control">
-        <button class="button mr-2" @click="emit('close')">Cancel</button>
-        <button class="button is-primary soft-if-dark mr-2" @click="send"
-          :disabled="!canManageMembers || pendingInvitees.length == 0">
+        <button class="button mr-2" @click="emit('close')">
+          {{ pendingInvitees.length > 0 ? 'Cancel' : 'Close' }}
+        </button>
+        <button v-if="canManageMembers" class="button is-primary soft-if-dark mr-2" @click="send"
+          :disabled="pendingInvitees.length == 0">
           Invite
         </button>
       </div>
@@ -180,6 +206,7 @@ const emit = defineEmits(['close']);
 const router = useRouter();
 
 const wksp = shallowRef<Workspace | null>(null);
+const inviteLink = ref(String());
 const inviteInput = ref(String())
 const canManageMembers = computed(() =>
   !!wksp.value?.metadata.owner && !!wksp.value?.invite.isMasterDevice(),
@@ -225,6 +252,7 @@ watch(
     wksp.value = await Workspace.setupOrRedir(router);
     if (!wksp.value) return;
 
+    inviteLink.value = String();
     invitees.value = wksp.value.invite.getInviteArray();
     pendingInvitees.value.length = 0; // clear pending invitees
     pendingRequests.value.length = 0;
@@ -233,6 +261,7 @@ watch(
       if (wksp.value?.metadata.name == requester[0] && !requester[2]) // requester[2] is false if request has not been dealt with yet
         addRequest(requester[1]);
     })
+    inviteLink.value = await wksp.value.invite.getJoinLink(router);
     members.value = await wksp.value.getMembers();
     await refreshOwnerJoinLink();
   },
@@ -271,6 +300,12 @@ async function copyInviteeList() {
 async function copyFastInviteLink(link: FastInviteLink) {
   await navigator.clipboard.writeText(link.href);
   Toast.success(`Copied invite link for ${link.label || link.email || link.name}`);
+}
+
+async function copyInviteLink() {
+  if (!inviteLink.value) return;
+  await navigator.clipboard.writeText(inviteLink.value);
+  Toast.success('Public join link copied to clipboard!');
 }
 
 const resendingInvite = ref<string | null>(null);
@@ -380,7 +415,7 @@ function addInvitee(invitee: string) {
     }
 
     // Convert email to NDN name
-    const ndnName = utils.convertEmailToNameLegacy(entry);
+    const ndnName = utils.convertEmailToName(entry);
 
     // Form profile
     new_profile = { name: ndnName, email: entry };
@@ -422,7 +457,7 @@ function addRequest(invitee: string) {
     }
 
     // Convert email to NDN name
-    const ndnName = utils.convertEmailToNameLegacy(entry);
+    const ndnName = utils.convertEmailToName(entry);
 
     // Form profile
     new_profile = { name: ndnName, email: entry };
@@ -495,7 +530,7 @@ async function send() {
   // Publish invitations and create per-invitee fast join links.
   for (const invitee of pendingInvitees.value) {
     try {
-      const href = await wksp.value.invite.tryFastInvite(invitee, router);
+      const href = await wksp.value.invite.tryInviteWithFastJoin(invitee, router);
       generatedLinks.push({ name: invitee.name, email: invitee.email, href });
       invitees.value.push(invitee);
     } catch (err) {
@@ -527,13 +562,41 @@ async function send() {
   resize: none;
 }
 
+.invite-link-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
+
+  .invite-link-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2rem;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: transparent;
+    padding: 0;
+  }
+}
+
+.invitee-list-action {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  align-self: center;
+}
+
 .invitee-management {
   .invitee-list-action {
     float: right;
-    width: 2rem;
-    height: 2rem;
-    border-radius: 50%;
-    align-self: center;
   }
 
   .scroller {
