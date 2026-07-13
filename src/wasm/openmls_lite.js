@@ -198,6 +198,28 @@ export class Group {
         return v1;
     }
     /**
+     * @returns {Array<any>}
+     */
+    member_identities() {
+        const ret = wasm.group_member_identities(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {Uint8Array} identity_value
+     * @returns {Uint32Array}
+     */
+    member_indexes_by_identity(identity_value) {
+        const ptr0 = passArray8ToWasm0(identity_value, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.group_member_indexes_by_identity(this.__wbg_ptr, ptr0, len0);
+        var v2 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v2;
+    }
+    /**
      * @param {Uint8Array} identity_prefix
      * @returns {Uint32Array}
      */
@@ -298,6 +320,10 @@ function __wbg_get_imports() {
             const ret = new Object();
             return ret;
         },
+        __wbg_new_3eb36ae241fe6f44: function() {
+            const ret = new Array();
+            return ret;
+        },
         __wbg_new_from_slice_a3d2629dc1826784: function(arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
@@ -324,6 +350,10 @@ function __wbg_get_imports() {
         },
         __wbg_prototypesetcall_bdcdcc5842e4d77d: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
+        },
+        __wbg_push_8ffdcb2063340ba5: function(arg0, arg1) {
+            const ret = arg0.push(arg1);
+            return ret;
         },
         __wbg_randomFillSync_f8c153b79f285817: function() { return handleError(function (arg0, arg1) {
             arg0.randomFillSync(arg1);

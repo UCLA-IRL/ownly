@@ -23,6 +23,8 @@ export class Group {
     epoch(): bigint;
     export_secret(label: string, context: Uint8Array, len: number): Uint8Array;
     group_id_bytes(): Uint8Array;
+    member_identities(): Array<any>;
+    member_indexes_by_identity(identity_value: Uint8Array): Uint32Array;
     member_indexes_by_identity_prefix(identity_prefix: Uint8Array): Uint32Array;
     merge_pending_commit(): void;
     my_index(): number;
@@ -48,6 +50,8 @@ export interface InitOutput {
     readonly group_epoch: (a: number) => bigint;
     readonly group_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly group_group_id_bytes: (a: number) => [number, number];
+    readonly group_member_identities: (a: number) => [number, number, number];
+    readonly group_member_indexes_by_identity: (a: number, b: number, c: number) => [number, number];
     readonly group_member_indexes_by_identity_prefix: (a: number, b: number, c: number) => [number, number];
     readonly group_merge_pending_commit: (a: number) => [number, number];
     readonly group_my_index: (a: number) => number;

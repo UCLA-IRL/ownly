@@ -3,8 +3,8 @@
     <div class="title is-5 mb-4">Invite people to {{ wksp?.metadata.label }}</div>
 
     <p>
-      A fast join link will be generated for each recipient. Note that Ownly does not automatically
-      send any emails &ndash; you must send each generated link directly to its recipient.
+      The owner join link can be shared with an owner device that needs to rejoin this workspace.
+      Fast join links are generated for invited recipients. Ownly does not automatically send emails.
     </p>
 
     <div class="fast-invite-links mt-3">
@@ -12,8 +12,8 @@
       <template v-if="fastInviteLinks.length > 0">
         <div class="fast-invite-link" v-for="link in fastInviteLinks" :key="link.name">
           <div class="fast-invite-recipient">
-            <strong>{{ link.email || link.name }}</strong>
-            <span v-if="link.email">{{ link.name }}</span>
+            <strong>{{ link.label || link.email || link.name }}</strong>
+            <span v-if="link.label || link.email">{{ link.name }}</span>
           </div>
           <code class="select-all">{{ link.href }}</code>
           <button class="button invitee-list-action" @click="copyFastInviteLink(link)" title="Copy invite link">
@@ -189,9 +189,10 @@ const invitees = ref([] as IProfile[]);
 const pendingInvitees = ref([] as IProfile[]);
 const pendingRequests = ref([] as IProfile[]);
 const removingMember = ref<string | null>(null);
-const fastInviteLinks = ref([] as { name: string; email?: string; href: string }[]);
-
+type FastInviteLink = { name: string; email?: string; label?: string; href: string };
+const fastInviteLinks = ref([] as FastInviteLink[]);
 const MAX_BATCH = 100;
+const OWNER_JOIN_LINK_LABEL = 'Owner join link';
 
 const allInvitees = computed(() => {
   return [
@@ -233,8 +234,24 @@ watch(
         addRequest(requester[1]);
     })
     members.value = await wksp.value.getMembers();
+    await refreshOwnerJoinLink();
   },
 );
+
+async function refreshOwnerJoinLink() {
+  if (!wksp.value) return;
+
+  const href = await wksp.value.invite.getJoinLink(router);
+  const link = {
+    name: wksp.value.metadata.name,
+    label: OWNER_JOIN_LINK_LABEL,
+    href,
+  };
+  fastInviteLinks.value = [
+    link,
+    ...fastInviteLinks.value.filter((existing) => existing.label !== OWNER_JOIN_LINK_LABEL),
+  ];
+}
 
 // Copy invitee list (including pending ones) to clipboard
 // Use comma as delimiters
@@ -251,9 +268,9 @@ async function copyInviteeList() {
   Toast.success(`Copied ${allInvitees.value.length} users to clipboard!`);
 }
 
-async function copyFastInviteLink(link: { name: string; email?: string; href: string }) {
+async function copyFastInviteLink(link: FastInviteLink) {
   await navigator.clipboard.writeText(link.href);
-  Toast.success(`Copied invite link for ${link.email || link.name}`);
+  Toast.success(`Copied invite link for ${link.label || link.email || link.name}`);
 }
 
 const resendingInvite = ref<string | null>(null);
@@ -473,7 +490,7 @@ async function send() {
     return;
   }
 
-  const generatedLinks: { name: string; email?: string; href: string }[] = [];
+  const generatedLinks: FastInviteLink[] = [];
 
   // Publish invitations and create per-invitee fast join links.
   for (const invitee of pendingInvitees.value) {
@@ -487,7 +504,10 @@ async function send() {
     }
   }
 
-  fastInviteLinks.value = generatedLinks;
+  fastInviteLinks.value = [
+    ...fastInviteLinks.value.filter((link) => link.label === OWNER_JOIN_LINK_LABEL),
+    ...generatedLinks,
+  ];
   pendingInvitees.value = [];
 
   try {

@@ -18,6 +18,7 @@ const MLS_GROUP_ID_STATE_KEY = 'mls/group-id/v1';
 const MLS_RESET_SENTINEL = '__mls_reset__';
 const MLS_PREJOIN_SESSION_ID = 'prejoin';
 const MLS_COMMIT_BROADCAST = '__mls_commit_broadcast__';
+const MLS_OWNER_RECOVERY_SESSION_PREFIX = 'owner-recovery:';
 const OWNER_CONTROL_MAP = 'owner-control';
 const OWNER_MASTER_DEVICE_ID_KEY = 'masterDeviceId';
 const OWNER_DEVICES_MAP = 'owner-devices';
@@ -31,6 +32,7 @@ export class WorkspaceInviteManager {
   private mlsGroup: OpenMlsLiteGroup | null = null;
   private mlsInitPromise: Promise<void> | null = null;
   private pendingCommitRefs: MlsRefPub[] = [];
+  private pendingOwnerRecoveryKpRefs: MlsRefPub[] = [];
   private onOwnerSessionAdvanced: ((sessionId: string) => Promise<void>) | null = null;
 
   // Deduplicate MLS publications delivered through live and snapshot paths.
@@ -101,6 +103,25 @@ export class WorkspaceInviteManager {
     return trimmed ? trimmed : undefined;
   }
 
+  private workspaceOwnerAccountId(): string {
+    const group = utils.normalizePath(this.api.group).replace(/\/+$/, '');
+    const idx = group.lastIndexOf('/');
+    if (idx <= 0) {
+      throw new Error(`Cannot infer workspace owner from ${this.api.group}`);
+    }
+    return group.slice(0, idx);
+  }
+
+  private ownerRecoveryTarget(pub: MlsRefPub): string | null {
+    if (!pub.session_id.startsWith(MLS_OWNER_RECOVERY_SESSION_PREFIX)) return null;
+    const target = pub.session_id.slice(MLS_OWNER_RECOVERY_SESSION_PREFIX.length).trim();
+    return target ? utils.normalizePath(target) : null;
+  }
+
+  private defaultOwnerDeviceLabel(deviceId: string): string {
+    return `Device ${deviceId.slice(0, 8)}`;
+  }
+
   private localOwnerDeviceRecord(now = Date.now()): IOwnerDeviceRecord {
     if (!this.wsmeta.owner || !this.wsmeta.deviceId) {
       throw new Error('Local device is not an owner device');
@@ -134,6 +155,54 @@ export class WorkspaceInviteManager {
   private maybeRegisterLocalOwnerDeviceRecord(now = Date.now()): void {
     if (!this.canRegisterLocalOwnerDeviceRecord()) return;
     this.upsertLocalOwnerDeviceRecord(now);
+  }
+
+  private upsertOwnerDeviceFromMlsIdentity(identityValue: string, now = Date.now()): boolean {
+    let identity: ReturnType<typeof parseMlsIdentity>;
+    try {
+      identity = parseMlsIdentity(identityValue);
+    } catch {
+      return false;
+    }
+    if (identity.accountId !== this.workspaceOwnerAccountId()) return false;
+
+    const existing = this.ownerDevices.get(identity.deviceId);
+    this.ownerDevices.set(identity.deviceId, {
+      deviceId: identity.deviceId,
+      ownerId: identity.accountId,
+      label: existing?.label?.trim() || this.defaultOwnerDeviceLabel(identity.deviceId),
+      registeredAt: existing?.registeredAt ?? now,
+    });
+    return true;
+  }
+
+  private reconcileOwnerDeviceRegistryFromMls(now = Date.now()): void {
+    if (!this.wsmeta.owner || !this.mlsGroup) return;
+
+    for (const identity of this.mlsGroup.memberIdentities()) {
+      this.upsertOwnerDeviceFromMlsIdentity(identity, now);
+    }
+    this.maybeRegisterLocalOwnerDeviceRecord(now);
+  }
+
+  private removeOwnerDeviceRecordFromInvitee(invitee: string): void {
+    let identity: ReturnType<typeof parseMlsIdentity>;
+    try {
+      identity = parseMlsIdentity(invitee);
+    } catch {
+      return;
+    }
+    if (identity.accountId !== this.workspaceOwnerAccountId()) return;
+    this.ownerDevices.delete(identity.deviceId);
+  }
+
+  private isLocalRemovalTarget(invitee: string): boolean {
+    if (invitee === this.api.name) return true;
+    try {
+      return invitee === this.currentMlsIdentity();
+    } catch {
+      return false;
+    }
   }
 
   private async initializeOwnerDeviceRole(): Promise<void> {
@@ -181,6 +250,14 @@ export class WorkspaceInviteManager {
     }
   }
 
+  public hasMlsGroup(): boolean {
+    return !!this.mlsGroup;
+  }
+
+  public shouldAutoRecoverOwnerMls(): boolean {
+    return !!this.wsmeta.owner && !this.isMasterDevice() && !this.mlsGroup;
+  }
+
   public getMasterOwnerDevice(): IOwnerDeviceRecord | undefined {
     const masterDeviceId = this.sharedMasterDeviceId();
     return masterDeviceId ? this.ownerDevices.get(masterDeviceId) : undefined;
@@ -210,21 +287,33 @@ export class WorkspaceInviteManager {
   }
 
   public async transferMasterRole(deviceId: string): Promise<void> {
-    if (!this.wsmeta.owner || !this.wsmeta.deviceId || !this.isMasterDevice()) {
-      throw new Error('Only the current master owner device can transfer control');
+    if (!this.wsmeta.owner || !this.wsmeta.deviceId) {
+      throw new Error('Only owner devices can transfer control');
     }
 
     const targetDeviceId = deviceId.trim();
     if (!targetDeviceId) {
       throw new Error('Missing target owner device ID');
     }
-    if (targetDeviceId === this.wsmeta.deviceId) {
-      return;
+
+    const claimingLocalDevice = targetDeviceId === this.wsmeta.deviceId;
+    if (!this.isMasterDevice() && !claimingLocalDevice) {
+      throw new Error('Only the current master owner device can transfer control to another device');
+    }
+    if (claimingLocalDevice && !this.mlsGroup) {
+      throw new Error('This owner device must join MLS before it can become master');
+    }
+
+    if (claimingLocalDevice) {
+      this.maybeRegisterLocalOwnerDeviceRecord();
     }
 
     const target = this.ownerDevices.get(targetDeviceId);
     if (!target) {
       throw new Error(`Owner device ${targetDeviceId} is not registered`);
+    }
+    if (this.sharedMasterDeviceId() === targetDeviceId) {
+      return;
     }
 
     this.ownerControl.set(OWNER_MASTER_DEVICE_ID_KEY, targetDeviceId);
@@ -237,8 +326,9 @@ export class WorkspaceInviteManager {
     throw new Error(`Only the master owner device can ${action}`);
   }
 
-  private async notifyOwnerSessionAdvanced(sessionId: string): Promise<void> {
-    if (!this.wsmeta.owner || !this.isMasterDevice() || !this.onOwnerSessionAdvanced) return;
+  private async notifyOwnerSessionAdvanced(sessionId: string, allowRecoveryHelper = false): Promise<void> {
+    if (!this.onOwnerSessionAdvanced) return;
+    if (!allowRecoveryHelper && (!this.wsmeta.owner || !this.isMasterDevice())) return;
     await this.onOwnerSessionAdvanced(sessionId);
   }
 
@@ -258,6 +348,24 @@ export class WorkspaceInviteManager {
       a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
     );
     return out;
+  }
+
+  private orderedPendingCommits(): MlsRefPub[] {
+    return [...this.pendingCommitRefs].sort((a, b) =>
+      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
+    );
+  }
+
+  private orderedPendingOwnerRecoveryKeyPackages(): MlsRefPub[] {
+    return [...this.pendingOwnerRecoveryKpRefs].sort((a, b) =>
+      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
+    );
+  }
+
+  private enqueuePendingOwnerRecoveryKeyPackage(pub: MlsRefPub): void {
+    const key = this.pubKey(pub);
+    if (this.pendingOwnerRecoveryKpRefs.some((p) => this.pubKey(p) === key)) return;
+    this.pendingOwnerRecoveryKpRefs.push(pub);
   }
 
   /**
@@ -398,12 +506,15 @@ export class WorkspaceInviteManager {
     this.mlsClient?.free();
     this.mlsClient = null;
     this.pendingCommitRefs = [];
+    this.pendingOwnerRecoveryKpRefs = [];
 
     this.wsmeta.mlsJoinRequested = false;
     this.wsmeta.mlsJoinRequestedAt = undefined;
     this.wsmeta.mlsJoinAttempts = undefined;
     this.wsmeta.mlsOwnerBootstrapped = false;
     this.wsmeta.mlsKeys = undefined;
+    this.wsmeta.ownerRecoveryHelper = undefined;
+    this.wsmeta.ownerRecoveryRequestedAt = undefined;
 
     await this.clearPersistedMlsState();
     await this.restoreLegacyWorkspaceKey();
@@ -426,12 +537,15 @@ export class WorkspaceInviteManager {
     this.mlsClient?.free();
     this.mlsClient = null;
     this.pendingCommitRefs = [];
+    this.pendingOwnerRecoveryKpRefs = [];
 
     this.wsmeta.mlsJoinRequested = false;
     this.wsmeta.mlsJoinRequestedAt = undefined;
     this.wsmeta.mlsJoinAttempts = undefined;
     this.wsmeta.mlsOwnerBootstrapped = false;
     this.wsmeta.mlsKeys = undefined;
+    this.wsmeta.ownerRecoveryHelper = undefined;
+    this.wsmeta.ownerRecoveryRequestedAt = undefined;
     this.wsmeta.dsk = null;
     this.wsmeta.dskExch = undefined;
     this.wsmeta.revoked = true;
@@ -466,6 +580,8 @@ export class WorkspaceInviteManager {
 
     await this.rotateWorkspaceMlsKey();
     await this.drainPendingCommitRefs();
+    await this.drainPendingOwnerRecoveryKeyPackages();
+    this.reconcileOwnerDeviceRegistryFromMls();
 
     if (this.wsmeta.owner && this.isMasterDevice() && !this.wsmeta.mlsOwnerBootstrapped) {
       this.wsmeta.mlsOwnerBootstrapped = true;
@@ -478,13 +594,14 @@ export class WorkspaceInviteManager {
   private async drainPendingCommitRefs(): Promise<void> {
     if (!this.mlsGroup || this.pendingCommitRefs.length === 0) return;
 
-    const pending = [...this.pendingCommitRefs].sort((a, b) =>
-      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
-    );
+    const pending = this.orderedPendingCommits();
     const stillPending: MlsRefPub[] = [];
 
     for (const pub of pending) {
-      if (pub.invitee === this.api.name) continue;
+      if (this.isLocalRemovalTarget(pub.invitee)) {
+        await this.revokeLocalWorkspaceAccess(`removed from MLS group by ${pub.publisher}`);
+        continue;
+      }
       try {
         const current = this.currentMlsSessionInfo();
         const target = this.parseMlsSessionId(pub.session_id);
@@ -504,12 +621,23 @@ export class WorkspaceInviteManager {
         }
         const commit = (await this.provider.consumeBlob(pub.blob_name)).data;
         await this.applyMlsCommit(commit, pub.session_id);
+        this.removeOwnerDeviceRecordFromInvitee(pub.invitee);
       } catch (e) {
         console.warn('Failed to apply queued MLS commit ref', pub, e);
       }
     }
 
     this.pendingCommitRefs = stillPending;
+  }
+
+  private async drainPendingOwnerRecoveryKeyPackages(): Promise<void> {
+    if (!this.mlsGroup || this.pendingOwnerRecoveryKpRefs.length === 0) return;
+
+    const pending = this.orderedPendingOwnerRecoveryKeyPackages();
+    this.pendingOwnerRecoveryKpRefs = [];
+    for (const pub of pending) {
+      await this.tryProcessOwnerRecoveryKeyPackage(pub);
+    }
   }
 
   private async restoreMlsStateOnStartup(): Promise<void> {
@@ -553,7 +681,14 @@ export class WorkspaceInviteManager {
     this.mlsGroup = client.joinFromWelcome(welcome);
     await this.rotateWorkspaceMlsKey(sessionId);
     await this.drainPendingCommitRefs();
-    this.maybeRegisterLocalOwnerDeviceRecord();
+    await this.drainPendingOwnerRecoveryKeyPackages();
+    this.reconcileOwnerDeviceRegistryFromMls();
+    if (this.wsmeta.owner && this.wsmeta.ownerRecoveryRequestedAt) {
+      this.wsmeta.ownerRecoveryRequestedAt = undefined;
+      this.wsmeta.ownerRecoveryHelper = undefined;
+      await this.syncMasterDeviceFlag();
+      await _o.stats.put(this.wsmeta.name, this.wsmeta);
+    }
   }
 
   /**
@@ -565,16 +700,20 @@ export class WorkspaceInviteManager {
     const group = this.checkMlsInitialized();
     group.applyCommit(commit);
     await this.rotateWorkspaceMlsKey(sessionId);
+    this.reconcileOwnerDeviceRegistryFromMls();
   }
 
   private async onMlsKpRefs(pubs: MlsRefPub[]): Promise<void> {
-    if (!this.wsmeta.owner) return;
-    if (!this.isMasterDevice()) return;
-    if (!this.mlsGroup && !this.wsmeta.mlsOwnerBootstrapped) {
+    if (this.wsmeta.owner && this.isMasterDevice() && !this.mlsGroup && !this.wsmeta.mlsOwnerBootstrapped) {
       await this.bootstrapOwnerMls();
     }
 
     for (const pub of this.uniqueOrdered(pubs)) {
+      if (this.ownerRecoveryTarget(pub)) {
+        await this.tryProcessOwnerRecoveryKeyPackage(pub);
+        continue;
+      }
+      if (!this.wsmeta.owner || !this.isMasterDevice()) continue;
       const kp = (await this.provider.consumeBlob(pub.blob_name)).data;
       let inviteeIdentity: string;
       let commit: Uint8Array;
@@ -597,6 +736,39 @@ export class WorkspaceInviteManager {
     }
   }
 
+  private async tryProcessOwnerRecoveryKeyPackage(pub: MlsRefPub): Promise<void> {
+    const targetHelper = this.ownerRecoveryTarget(pub);
+    const localAccount = utils.normalizePath(this.api.name);
+    const localIdentity = this.currentMlsIdentity();
+    if (!targetHelper || (targetHelper !== localAccount && targetHelper !== localIdentity)) return;
+    if (!this.mlsGroup) {
+      console.warn('Ignoring owner recovery KP ref; local device is not in MLS', pub);
+      this.enqueuePendingOwnerRecoveryKeyPackage(pub);
+      return;
+    }
+
+    console.log(`Processing owner recovery MLS KP ref from ${pub.invitee}`);
+    const kp = (await this.provider.consumeBlob(pub.blob_name)).data;
+    let inviteeIdentity: string;
+    let commit: Uint8Array;
+    let welcome: Uint8Array;
+    let sessionId: string;
+    try {
+      ({ inviteeIdentity, commit, welcome, sessionId } = await this.addOwnerRecoveryFromKeyPackage(kp, pub.invitee));
+    } catch (e) {
+      console.warn(`Ignoring invalid owner recovery MLS KP ref from ${pub.invitee}`, e);
+      return;
+    }
+
+    const inviteeKey = utils.escapeUrlName(inviteeIdentity);
+    const commitBlob = await this.provider.publishBlob(`mls-commit-owner-recovery-${inviteeKey}`, commit);
+    const welcomeBlob = await this.provider.publishBlob(`mls-welcome-owner-recovery-${inviteeKey}`, welcome);
+
+    await this.provider.svs.pub_mls_commit_ref(MLS_COMMIT_BROADCAST, commitBlob, sessionId);
+    await this.provider.svs.pub_mls_welcome_ref(inviteeIdentity, welcomeBlob, sessionId);
+    await this.notifyOwnerSessionAdvanced(sessionId, true);
+  }
+
   private async onMlsWelcomeRefs(pubs: MlsRefPub[]): Promise<void> {
     const currentIdentity = this.currentMlsIdentity();
     for (const pub of this.uniqueOrdered(pubs)) {
@@ -613,8 +785,7 @@ export class WorkspaceInviteManager {
         await this.resetLocalMlsState(`remote group reset from ${pub.publisher}`);
         continue;
       }
-      if (this.wsmeta.owner && this.isMasterDevice()) continue; // master owner already merged pending
-      if (pub.invitee === this.api.name) {
+      if (this.isLocalRemovalTarget(pub.invitee)) {
         if (this.mlsGroup || this.wsmeta.mlsKeys?.length) {
           await this.revokeLocalWorkspaceAccess(`removed from MLS group by ${pub.publisher}`);
         }
@@ -642,17 +813,18 @@ export class WorkspaceInviteManager {
       }
       const commit = (await this.provider.consumeBlob(pub.blob_name)).data;
       await this.applyMlsCommit(commit, pub.session_id);
+      this.removeOwnerDeviceRecordFromInvitee(pub.invitee);
       await this.drainPendingCommitRefs();
     }
   }
 
-  public async publishKeyPackageRef(): Promise<void> {
+  public async publishKeyPackageRef(sessionId = MLS_PREJOIN_SESSION_ID): Promise<void> {
     const client = await this.getMlsClient();
     const kp = client.keyPackage();
     const identity = this.currentMlsIdentity();
     const inviteeKey = utils.escapeUrlName(identity);
     const blob = await this.provider.publishBlob(`mls-kp-${inviteeKey}`, kp);
-    await this.provider.svs.pub_mls_kp_ref(identity, blob, MLS_PREJOIN_SESSION_ID);
+    await this.provider.svs.pub_mls_kp_ref(identity, blob, sessionId);
   }
 
   public async requestMlsJoin(): Promise<void> {
@@ -665,8 +837,52 @@ export class WorkspaceInviteManager {
       this.wsmeta.mlsJoinRequested = true;
       this.wsmeta.mlsJoinRequestedAt = Date.now();
       this.wsmeta.mlsJoinAttempts = (this.wsmeta.mlsJoinAttempts ?? 0) + 1;
+      this.wsmeta.ownerRecoveryHelper = undefined;
+      this.wsmeta.ownerRecoveryRequestedAt = undefined;
     } catch (e) {
       this.wsmeta.mlsJoinRequested = false;
+      this.wsmeta.mlsJoinRequestedAt = undefined;
+      await _o.stats.put(this.wsmeta.name, this.wsmeta);
+      throw e;
+    }
+
+    await _o.stats.put(this.wsmeta.name, this.wsmeta);
+  }
+
+  public async requestOwnerRecoveryMlsJoin(helperAccountId: string): Promise<void> {
+    if (!this.wsmeta.owner) {
+      throw new Error('Only owner devices can request owner recovery');
+    }
+    if (this.isMasterDevice()) {
+      throw new Error('Master owner device does not need owner recovery');
+    }
+    if (this.mlsGroup) {
+      throw new Error('This owner device is already in MLS; make it master instead');
+    }
+
+    const helper = utils.normalizePath(helperAccountId.trim());
+    if (
+      !helper ||
+      helper === '/' ||
+      helper === this.currentMlsIdentity() ||
+      helper === utils.normalizePath(this.api.name) ||
+      helper === this.workspaceOwnerAccountId()
+    ) {
+      throw new Error('Choose another online workspace device as recovery helper');
+    }
+
+    try {
+      await this.publishKeyPackageRef(`${MLS_OWNER_RECOVERY_SESSION_PREFIX}${helper}`);
+      this.wsmeta.mlsJoinRequested = true;
+      this.wsmeta.mlsJoinRequestedAt = Date.now();
+      this.wsmeta.mlsJoinAttempts = (this.wsmeta.mlsJoinAttempts ?? 0) + 1;
+      this.wsmeta.ownerRecoveryHelper = helper;
+      this.wsmeta.ownerRecoveryRequestedAt = Date.now();
+    } catch (e) {
+      this.wsmeta.mlsJoinRequested = false;
+      this.wsmeta.mlsJoinRequestedAt = undefined;
+      this.wsmeta.ownerRecoveryHelper = undefined;
+      this.wsmeta.ownerRecoveryRequestedAt = undefined;
       await _o.stats.put(this.wsmeta.name, this.wsmeta);
       throw e;
     }
@@ -703,6 +919,43 @@ export class WorkspaceInviteManager {
 
     const sessionId = this.currentMlsSessionId();
     await this.rotateWorkspaceMlsKey(sessionId);
+    this.reconcileOwnerDeviceRegistryFromMls();
+
+    return {
+      inviteeIdentity,
+      commit,
+      welcome,
+      sessionId,
+    };
+  }
+
+  private async addOwnerRecoveryFromKeyPackage(
+    kp: Uint8Array,
+    expectedIdentity?: string,
+  ): Promise<{ inviteeIdentity: string; commit: Uint8Array; welcome: Uint8Array; sessionId: string }> {
+    if (!(kp instanceof Uint8Array) || kp.length === 0) {
+      throw new Error('Invalid key package');
+    }
+
+    const inviteeIdentity = await this.keyPackageIdentity(kp);
+    if (expectedIdentity && inviteeIdentity !== expectedIdentity) {
+      throw new Error(`MLS key package identity mismatch: expected ${expectedIdentity}, got ${inviteeIdentity}`);
+    }
+
+    const identity = parseMlsIdentity(inviteeIdentity);
+    if (identity.accountId !== this.workspaceOwnerAccountId()) {
+      throw new Error(`Owner recovery KP is for ${identity.accountId}, not workspace owner ${this.workspaceOwnerAccountId()}`);
+    }
+
+    const group = this.checkMlsInitialized();
+    const { commit, welcome } = group.addMembers([kp]);
+    group.mergePendingCommit();
+
+    const sessionId = this.currentMlsSessionId();
+    await this.rotateWorkspaceMlsKey(sessionId);
+
+    this.upsertOwnerDeviceFromMlsIdentity(inviteeIdentity);
+    this.reconcileOwnerDeviceRegistryFromMls();
 
     return {
       inviteeIdentity,
@@ -755,6 +1008,57 @@ export class WorkspaceInviteManager {
     await this.notifyOwnerSessionAdvanced(sessionId);
   }
 
+  public async removeOwnerDevice(deviceId: string): Promise<void> {
+    if (!this.wsmeta.owner) {
+      throw new Error('Only workspace owner devices can remove owner devices');
+    }
+    if (!this.isMasterDevice()) {
+      throw new Error('Only the master owner device can remove owner devices');
+    }
+
+    const targetDeviceId = deviceId.trim();
+    if (!targetDeviceId) {
+      throw new Error('Missing target owner device ID');
+    }
+    if (targetDeviceId === this.wsmeta.deviceId) {
+      throw new Error('Refusing to remove the current owner device');
+    }
+    if (this.sharedMasterDeviceId() === targetDeviceId) {
+      throw new Error('Transfer master control before removing this owner device');
+    }
+
+    const target = this.ownerDevices.get(targetDeviceId);
+    if (!target) {
+      throw new Error(`Owner device ${targetDeviceId} is not registered`);
+    }
+
+    const group = this.checkMlsInitialized();
+    const identity = encodeMlsIdentity(target.ownerId || this.workspaceOwnerAccountId(), targetDeviceId);
+    const indexes = group.memberIndexesByIdentity(new TextEncoder().encode(identity));
+
+    if (!indexes.length) {
+      this.ownerDevices.delete(targetDeviceId);
+      return;
+    }
+    if (indexes.includes(group.myIndex())) {
+      throw new Error('Refusing to remove self in this flow');
+    }
+
+    const { commit } = group.removeMembers(indexes);
+    group.mergePendingCommit();
+
+    const sessionId = this.currentMlsSessionId();
+    await this.rotateWorkspaceMlsKey(sessionId);
+    this.ownerDevices.delete(targetDeviceId);
+
+    const blob = await this.provider.publishBlob(
+      `mls-commit-rm-owner-device-${utils.escapeUrlName(identity)}`,
+      commit,
+    );
+    await this.provider.svs.pub_mls_commit_ref(identity, blob, sessionId);
+    await this.notifyOwnerSessionAdvanced(sessionId);
+  }
+
   public async resetGroupMlsState(): Promise<void> {
     if (!this.wsmeta.owner) {
       throw new Error('Only workspace owner can reset MLS state for the group');
@@ -792,7 +1096,7 @@ export class WorkspaceInviteManager {
 
         this.wsmeta.mlsOwnerBootstrapped = true;
         await _o.stats.put(this.wsmeta.name, this.wsmeta);
-        this.maybeRegisterLocalOwnerDeviceRecord();
+        this.reconcileOwnerDeviceRegistryFromMls();
       })();
     }
 

@@ -36,6 +36,10 @@ export type IWkspStats = {
   mlsJoinAttempts?: number;
   mlsOwnerBootstrapped?: boolean;
   mlsKeys?: IMlsKey[];
+  /** Member selected to help recover an owner device into MLS */
+  ownerRecoveryHelper?: string;
+  /** Time when this owner device requested member-assisted MLS recovery */
+  ownerRecoveryRequestedAt?: number;
 };
 
 export type IOwnerDeviceRecord = {

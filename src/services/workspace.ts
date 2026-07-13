@@ -5,7 +5,7 @@ import {WorkspaceAgentManager} from './workspace-agent'
 
 import ndn from '@/services/ndn';
 import { SvsProvider } from '@/services/svs-provider';
-import { encodeMlsIdentity } from '@/services/mls-identity';
+import { encodeMlsIdentity, parseMlsIdentity } from '@/services/mls-identity';
 
 
 import { GlobalBus } from '@/services/event-bus';
@@ -33,6 +33,10 @@ declare global {
 export class Workspace {
   private static readonly REFRESH_MAX_AGE_MS = 30_000;
   private static readonly REFRESH_STATE_TTL_MS = 60_000;
+  private static readonly OWNER_RECOVERY_AUTO_DELAY_MS = 5_000;
+  private static readonly OWNER_RECOVERY_REQUEST_RETRY_MS = 60_000;
+  private static readonly OWNER_RECOVERY_DISCOVERY_MS = 3_000;
+  private static readonly OWNER_RECOVERY_DISCOVERY_POLL_MS = 200;
 
   private readonly refreshUnsubs = Array<() => void>();
   private readonly pendingRefreshPongs = new Map<string, {
@@ -40,6 +44,7 @@ export class Workspace {
     responders: Map<string, RefreshPongPub>;
   }>();
   private readonly seenRefreshPings = new Map<string, number>();
+  private ownerRecoveryRetryTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 
 
 
@@ -154,6 +159,7 @@ export class Workspace {
           await invite.resetGroupMlsState();
         });
       }
+      workspace.scheduleAutoOwnerRecovery();
 
       // Then create agent with workspace reference
       const agent = await WorkspaceAgentManager.create(api, provider, workspace);
@@ -182,6 +188,10 @@ export class Workspace {
     this.refreshUnsubs.length = 0;
     this.pendingRefreshPongs.clear();
     this.seenRefreshPings.clear();
+    if (this.ownerRecoveryRetryTimer) {
+      globalThis.clearTimeout(this.ownerRecoveryRetryTimer);
+      this.ownerRecoveryRetryTimer = null;
+    }
 
     await this.provider?.destroy();
     if (this.agent) {
@@ -238,6 +248,15 @@ export class Workspace {
 
       entry.responders.set(pub.responder, pub);
     }
+  }
+
+  private workspaceOwnerAccountId(): string {
+    const group = utils.normalizePath(this.api.group).replace(/\/+$/, '');
+    const idx = group.lastIndexOf('/');
+    if (idx <= 0) {
+      throw new Error(`Cannot infer workspace owner from ${this.api.group}`);
+    }
+    return group.slice(0, idx);
   }
 
   public async sendRefreshPing(): Promise<string> {
@@ -319,6 +338,114 @@ export class Workspace {
     }
 
     throw new Error('All online responders failed to republish the SOS request');
+  }
+
+  private scheduleAutoOwnerRecovery(delayMs = Workspace.OWNER_RECOVERY_AUTO_DELAY_MS): void {
+    if (this.ownerRecoveryRetryTimer) return;
+    if (!this.invite.shouldAutoRecoverOwnerMls()) return;
+
+    this.ownerRecoveryRetryTimer = globalThis.setTimeout(() => {
+      this.ownerRecoveryRetryTimer = null;
+      void this.autoRecoverOwnerMlsIfNeeded().catch((e) => {
+        console.warn('Automatic owner MLS recovery failed', e);
+        if (this.invite.shouldAutoRecoverOwnerMls()) {
+          this.scheduleAutoOwnerRecovery(Workspace.OWNER_RECOVERY_REQUEST_RETRY_MS);
+        }
+      });
+    }, delayMs);
+  }
+
+  private shouldSkipOwnerRecoveryRequest(now = Date.now()): boolean {
+    const requestedAt = this.metadata.ownerRecoveryRequestedAt;
+    return !!requestedAt && now - requestedAt < Workspace.OWNER_RECOVERY_REQUEST_RETRY_MS;
+  }
+
+  private ownerRecoveryResponderKind(responder: string): 'master-owner' | 'owner' | 'member' | null {
+    const normalized = utils.normalizePath(responder);
+    if (!normalized || normalized === this.currentDeviceIdentity()) return null;
+
+    let identity: ReturnType<typeof parseMlsIdentity>;
+    try {
+      identity = parseMlsIdentity(normalized);
+    } catch {
+      return null;
+    }
+
+    if (identity.accountId !== this.workspaceOwnerAccountId()) {
+      return 'member';
+    }
+
+    const masterOwnerDevice = this.invite.getMasterOwnerDevice();
+    if (masterOwnerDevice?.deviceId === identity.deviceId) {
+      return 'master-owner';
+    }
+
+    const knownOwnerDevice = this.invite
+      .getOwnerDevices()
+      .some((device) => device.deviceId === identity.deviceId);
+    return knownOwnerDevice ? 'owner' : null;
+  }
+
+  private async findOwnerRecoveryResponder(
+    timeoutMs = Workspace.OWNER_RECOVERY_DISCOVERY_MS,
+    pollMs = Workspace.OWNER_RECOVERY_DISCOVERY_POLL_MS,
+  ): Promise<string | null> {
+    const requestId = await this.sendRefreshPing();
+    const deadline = Date.now() + timeoutMs;
+    let memberFallback: string | null = null;
+
+    try {
+      while (Date.now() < deadline) {
+        const responders = this.getRefreshResponders(requestId)
+          .map((pub) => pub.responder)
+          .sort((a, b) => a.localeCompare(b));
+        let sawMasterOwner = false;
+        let ownerCandidate: string | null = null;
+
+        for (const responder of responders) {
+          const kind = this.ownerRecoveryResponderKind(responder);
+          if (kind === 'master-owner') {
+            sawMasterOwner = true;
+            continue;
+          }
+          if (kind === 'owner' && !ownerCandidate) {
+            ownerCandidate = responder;
+            continue;
+          }
+          if (kind === 'member' && !memberFallback) {
+            memberFallback = responder;
+          }
+        }
+
+        if (sawMasterOwner) return null;
+        if (ownerCandidate) return ownerCandidate;
+
+        await this.sleep(pollMs);
+      }
+    } finally {
+      this.pendingRefreshPongs.delete(requestId);
+    }
+
+    return memberFallback;
+  }
+
+  private async autoRecoverOwnerMlsIfNeeded(): Promise<void> {
+    try {
+      if (!this.invite.shouldAutoRecoverOwnerMls()) return;
+      if (this.shouldSkipOwnerRecoveryRequest()) return;
+
+      const responder = await this.findOwnerRecoveryResponder();
+      if (!responder) return;
+      if (!this.invite.shouldAutoRecoverOwnerMls()) return;
+      if (this.shouldSkipOwnerRecoveryRequest()) return;
+
+      await this.invite.requestOwnerRecoveryMlsJoin(responder);
+      console.info(`Requested automatic owner MLS recovery from ${responder}`);
+    } finally {
+      if (this.invite.shouldAutoRecoverOwnerMls()) {
+        this.scheduleAutoOwnerRecovery(Workspace.OWNER_RECOVERY_REQUEST_RETRY_MS);
+      }
+    }
   }
 
   public getRefreshResponders(requestId: string): RefreshPongPub[] {
