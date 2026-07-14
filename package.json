@@ -18,6 +18,9 @@
     "mls:wasm": "cd openmls-lite && cargo build --target wasm32-unknown-unknown --release --no-default-features --features wasm && wasm-bindgen --target web --out-dir ../src/wasm --out-name openmls_lite target/wasm32-unknown-unknown/release/openmls_lite.wasm"
   },
   "dependencies": {
+    "@bugsnag/browser-performance": "^3.4.1",
+    "@bugsnag/js": "^8.10.0",
+    "@bugsnag/plugin-vue": "^8.9.0",
     "@dicebear/collection": "^9.2.2",
     "@dicebear/core": "^9.2.2",
     "@excalidraw/excalidraw": "^0.18.0",
