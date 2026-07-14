@@ -41,6 +41,7 @@ const bugsnagVue = Bugsnag.getPlugin('vue')
 
 // Initialize Vue app
 const app = createApp(App);
-app.use(bugsnagVue)
+app.use(bugsnagVue!)
 app.use(router);
 app.mount('#app');
+Bugsnag.notify("test error")
