@@ -20,7 +20,9 @@ type WasmGroup = {
     merge_pending_commit(): void;
     apply_commit(commitBytes: Uint8Array): void;
     my_index(): number;
+    member_indexes_by_identity(identityValue: Uint8Array): Uint32Array;
     member_indexes_by_identity_prefix(identityPrefix: Uint8Array): Uint32Array;
+    member_identities(): unknown;
     group_id_bytes(): Uint8Array;
     epoch(): bigint;
     export_secret(label: string, context: Uint8Array, len: number): Uint8Array;
@@ -139,6 +141,15 @@ export class OpenMlsLiteGroup {
 
     memberIndexesByIdentityPrefix(identityPrefix: Uint8Array): number[] {
         return Array.from(this.inner.member_indexes_by_identity_prefix(identityPrefix));
+    }
+
+    memberIndexesByIdentity(identityValue: Uint8Array): number[] {
+        return Array.from(this.inner.member_indexes_by_identity(identityValue));
+    }
+
+    memberIdentities(): string[] {
+        return Array.from(this.inner.member_identities() as Iterable<unknown>)
+            .filter((identity): identity is string => typeof identity === 'string');
     }
 
     exportSecret(label: string, context = new Uint8Array(), len = 32): Uint8Array {

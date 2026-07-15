@@ -4,11 +4,13 @@
 
     <p v-if="canManageMembers">
       Share the public join link for the traditional flow, or add recipients below to generate
-      per-person fast join links. Ownly does not automatically send emails.
+      per-person fast join links. The owner join link can be shared with an owner device that needs
+      to rejoin this workspace. Ownly does not automatically send emails.
     </p>
     <p v-else>
-      Share the public join link for the traditional flow. A master owner device must approve
-      access requests and manage per-person fast join links.
+      Share the public join link for the traditional flow. The owner join link can be shared with
+      an owner device that needs to rejoin this workspace. A master owner device must approve access
+      requests and manage per-person fast join links.
     </p>
 
     <div class="invite-link-box mt-3">
@@ -26,24 +28,24 @@
       </div>
     </div>
 
-    <template v-if="canManageMembers">
-      <div class="fast-invite-links mt-3">
-        <div class="title is-6 mb-2">Generated fast join links</div>
-        <template v-if="fastInviteLinks.length > 0">
-          <div class="fast-invite-link" v-for="link in fastInviteLinks" :key="link.name">
-            <div class="fast-invite-recipient">
-              <strong>{{ link.email || link.name }}</strong>
-              <span v-if="link.email">{{ link.name }}</span>
-            </div>
-            <code class="select-all">{{ link.href }}</code>
-            <button class="button invitee-list-action" @click="copyFastInviteLink(link)" title="Copy invite link">
-              <FontAwesomeIcon :icon="faCopy" />
-            </button>
+    <div class="fast-invite-links mt-3">
+      <div class="title is-6 mb-2">Generated invite links</div>
+      <template v-if="fastInviteLinks.length > 0">
+        <div class="fast-invite-link" v-for="link in fastInviteLinks" :key="link.name">
+          <div class="fast-invite-recipient">
+            <strong>{{ link.label || link.email || link.name }}</strong>
+            <span v-if="link.label || link.email">{{ link.name }}</span>
           </div>
-        </template>
-        <p v-else class="invite-link-empty">No generated links yet.</p>
-      </div>
+          <code class="select-all">{{ link.href }}</code>
+          <button class="button invitee-list-action" @click="copyFastInviteLink(link)" title="Copy invite link">
+            <FontAwesomeIcon :icon="faCopy" />
+          </button>
+        </div>
+      </template>
+      <p v-else class="invite-link-empty">No generated links yet.</p>
+    </div>
 
+    <template v-if="canManageMembers">
       <p class="mt-2">Enter an email address or NDN name below</p>
 
       <div class="field has-addons mt-2">
@@ -214,9 +216,10 @@ const invitees = ref([] as IProfile[]);
 const pendingInvitees = ref([] as IProfile[]);
 const pendingRequests = ref([] as IProfile[]);
 const removingMember = ref<string | null>(null);
-const fastInviteLinks = ref([] as { name: string; email?: string; href: string }[]);
-
+type FastInviteLink = { name: string; email?: string; label?: string; href: string };
+const fastInviteLinks = ref([] as FastInviteLink[]);
 const MAX_BATCH = 100;
+const OWNER_JOIN_LINK_LABEL = 'Owner join link';
 
 const allInvitees = computed(() => {
   return [
@@ -260,8 +263,24 @@ watch(
     })
     inviteLink.value = await wksp.value.invite.getJoinLink(router);
     members.value = await wksp.value.getMembers();
+    await refreshOwnerJoinLink();
   },
 );
+
+async function refreshOwnerJoinLink() {
+  if (!wksp.value) return;
+
+  const href = await wksp.value.invite.getJoinLink(router);
+  const link = {
+    name: wksp.value.metadata.name,
+    label: OWNER_JOIN_LINK_LABEL,
+    href,
+  };
+  fastInviteLinks.value = [
+    link,
+    ...fastInviteLinks.value.filter((existing) => existing.label !== OWNER_JOIN_LINK_LABEL),
+  ];
+}
 
 // Copy invitee list (including pending ones) to clipboard
 // Use comma as delimiters
@@ -278,9 +297,9 @@ async function copyInviteeList() {
   Toast.success(`Copied ${allInvitees.value.length} users to clipboard!`);
 }
 
-async function copyFastInviteLink(link: { name: string; email?: string; href: string }) {
+async function copyFastInviteLink(link: FastInviteLink) {
   await navigator.clipboard.writeText(link.href);
-  Toast.success(`Copied invite link for ${link.email || link.name}`);
+  Toast.success(`Copied invite link for ${link.label || link.email || link.name}`);
 }
 
 async function copyInviteLink() {
@@ -506,7 +525,7 @@ async function send() {
     return;
   }
 
-  const generatedLinks: { name: string; email?: string; href: string }[] = [];
+  const generatedLinks: FastInviteLink[] = [];
 
   // Publish invitations and create per-invitee fast join links.
   for (const invitee of pendingInvitees.value) {
@@ -520,7 +539,10 @@ async function send() {
     }
   }
 
-  fastInviteLinks.value = generatedLinks;
+  fastInviteLinks.value = [
+    ...fastInviteLinks.value.filter((link) => link.label === OWNER_JOIN_LINK_LABEL),
+    ...generatedLinks,
+  ];
   pendingInvitees.value = [];
 
   try {

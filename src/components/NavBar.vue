@@ -188,7 +188,7 @@
                       v-if="!isMasterOwnerDevice(device)"
                       class="owner-device-action"
                       type="button"
-                      :disabled="transferringMasterDeviceId === device.deviceId || !canCurrentWorkspaceManageMls()"
+                      :disabled="transferringMasterDeviceId === device.deviceId || !canTransferMasterToDevice(device)"
                       @click="transferMasterToDevice(device)"
                     >
                       {{
@@ -197,12 +197,25 @@
                           : 'Make Master'
                       }}
                     </button>
+                    <button
+                      v-if="!isLocalOwnerDevice(device)"
+                      class="owner-device-action danger"
+                      type="button"
+                      :disabled="removingOwnerDeviceId === device.deviceId || !canRemoveOwnerDevice(device)"
+                      @click="removeOwnerDevice(device)"
+                    >
+                      {{
+                        removingOwnerDeviceId === device.deviceId
+                          ? 'Removing...'
+                          : 'Remove'
+                      }}
+                    </button>
                   </div>
                 </div>
               </div>
               <div v-else class="owner-device-empty">No owner devices registered yet.</div>
               <div v-if="!canCurrentWorkspaceManageMls()" class="owner-device-note">
-                Only the current master owner device can transfer control.
+                The current master can transfer control to any owner device. This owner device can also make itself master after it has joined MLS.
               </div>
             </div>
           </li>
@@ -297,6 +310,7 @@ const currentWorkspaceIsOwner = ref(false);
 const localOwnerDeviceId = ref(null as string | null);
 const masterOwnerDeviceId = ref(null as string | null);
 const transferringMasterDeviceId = ref(null as string | null);
+const removingOwnerDeviceId = ref(null as string | null);
 
 // vue-tsc chokes on this type inference
 const projectTree = useTemplateRef<Array<InstanceType<typeof ProjectTree>>>('projectTree');
@@ -565,6 +579,21 @@ function isLocalOwnerDevice(device: IOwnerDeviceRecord): boolean {
   return device.deviceId === localOwnerDeviceId.value;
 }
 
+function canTransferMasterToDevice(device: IOwnerDeviceRecord): boolean {
+  const wksp = globalThis.ActiveWorkspace;
+  if (!wksp?.metadata.owner) return false;
+  if (wksp.invite.isMasterDevice()) return true;
+  return isLocalOwnerDevice(device) && wksp.invite.hasMlsGroup();
+}
+
+function canRemoveOwnerDevice(device: IOwnerDeviceRecord): boolean {
+  const wksp = globalThis.ActiveWorkspace;
+  return !!wksp?.metadata.owner &&
+    wksp.invite.isMasterDevice() &&
+    !isLocalOwnerDevice(device) &&
+    !isMasterOwnerDevice(device);
+}
+
 async function renameOwnerDevice(device: IOwnerDeviceRecord) {
   const wksp = globalThis.ActiveWorkspace;
   if (!wksp?.metadata.owner) {
@@ -591,8 +620,8 @@ async function transferMasterToDevice(device: IOwnerDeviceRecord) {
     Toast.error('No active workspace');
     return;
   }
-  if (!canCurrentWorkspaceManageMls()) {
-    Toast.error('Only the current master owner device can transfer control');
+  if (!canTransferMasterToDevice(device)) {
+    Toast.error('This owner device can only make itself master');
     return;
   }
   if (transferringMasterDeviceId.value) return;
@@ -610,6 +639,34 @@ async function transferMasterToDevice(device: IOwnerDeviceRecord) {
     await progress.error(`Failed to transfer master control: ${err}`);
   } finally {
     transferringMasterDeviceId.value = null;
+  }
+}
+
+async function removeOwnerDevice(device: IOwnerDeviceRecord) {
+  const wksp = globalThis.ActiveWorkspace;
+  if (!wksp) {
+    Toast.error('No active workspace');
+    return;
+  }
+  if (!canRemoveOwnerDevice(device)) {
+    Toast.error('Only the master owner device can remove another non-master owner device');
+    return;
+  }
+  if (removingOwnerDeviceId.value) return;
+  if (!globalThis.confirm(`Remove owner device ${device.label} from MLS and the registry?`)) {
+    return;
+  }
+
+  removingOwnerDeviceId.value = device.deviceId;
+  const progress = Toast.loading(`Removing owner device ${device.label}...`);
+  try {
+    await wksp.invite.removeOwnerDevice(device.deviceId);
+    syncOwnerDevices();
+    await progress.success(`Removed owner device ${device.label}`);
+  } catch (err) {
+    await progress.error(`Failed to remove owner device: ${err}`);
+  } finally {
+    removingOwnerDeviceId.value = null;
   }
 }
 
@@ -879,6 +936,14 @@ async function resetMlsState() {
     &:disabled {
       cursor: default;
       opacity: 0.55;
+    }
+
+    &.danger {
+      background: rgba(255, 88, 88, 0.22);
+
+      &:hover:enabled {
+        background: rgba(255, 88, 88, 0.34);
+      }
     }
   }
 

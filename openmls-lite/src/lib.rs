@@ -255,6 +255,44 @@ impl Group {
             .collect::<Vec<_>>()
             .into_boxed_slice()
     }
+
+    #[wasm_bindgen]
+    pub fn member_indexes_by_identity(&self, identity_value: &[u8]) -> Box<[u32]> {
+        self.group
+            .members()
+            .filter(|m| {
+                if m.credential.credential_type() != CredentialType::Basic {
+                    return false;
+                }
+                let identity = match decode_workspace_credential(m.credential.serialized_content()) {
+                    Ok((identity, _workspace_cert)) => identity,
+                    Err(_) => return false,
+                };
+                identity == identity_value
+            })
+            .map(|m| m.index.u32())
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }
+
+    #[wasm_bindgen]
+    pub fn member_identities(&self) -> Result<js_sys::Array, JsValue> {
+        let out = js_sys::Array::new();
+        for member in self.group.members() {
+            if member.credential.credential_type() != CredentialType::Basic {
+                continue;
+            }
+            let (identity, _workspace_cert) = match decode_workspace_credential(
+                member.credential.serialized_content(),
+            ) {
+                Ok(decoded) => decoded,
+                Err(_) => continue,
+            };
+            let identity = std::str::from_utf8(identity).map_err(err)?;
+            out.push(&JsValue::from_str(identity));
+        }
+        Ok(out)
+    }
     
     #[wasm_bindgen]
     pub fn export_secret(&self, label: &str, context: &[u8], len: usize) -> Result<Vec<u8>, JsValue> {
