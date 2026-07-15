@@ -51,7 +51,6 @@
     "vue-router": "^4.5.0",
     "vue-virtual-scroller": "^2.0.0-beta.8",
     "vue3-toastify": "^0.2.8",
-    "vuew": "^1.0.0-security",
     "webworker-typed": "^1.0.5",
     "y-monaco": "^0.1.6",
     "y-prosemirror": "^1.2.17",
