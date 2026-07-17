@@ -32,10 +32,10 @@ globalThis._o = {
 };
 
 Bugsnag.start({
-  apiKey: '76a3c6d0b791072ef5bf22b5864600b5',
+  apiKey: 'a41b01b8de77ceea576510367b8be8c5',
   plugins: [new BugsnagPluginVue()]
 })
-BugsnagPerformance.start({ apiKey: '76a3c6d0b791072ef5bf22b5864600b5' })
+BugsnagPerformance.start({ apiKey: 'a41b01b8de77ceea576510367b8be8c5' })
 
 const bugsnagVue = Bugsnag.getPlugin('vue')
 
@@ -44,4 +44,3 @@ const app = createApp(App);
 app.use(bugsnagVue!)
 app.use(router);
 app.mount('#app');
-Bugsnag.notify("test error")
