@@ -18,6 +18,10 @@ import { IDBProjDb } from './services/database/proj_db_browser';
 import { IDBBootStateDb } from './services/database/boot_db_browser';
 import streamSaver from 'streamsaver';
 
+import Bugsnag from '@bugsnag/js'
+import BugsnagPluginVue from '@bugsnag/plugin-vue'
+import BugsnagPerformance from '@bugsnag/browser-performance'
+
 globalThis._o = {
   stats: new IDBStatsDb(),
   ProjDb: IDBProjDb,
@@ -27,7 +31,16 @@ globalThis._o = {
   streamSaver: streamSaver,
 };
 
+Bugsnag.start({
+  apiKey: 'a41b01b8de77ceea576510367b8be8c5',
+  plugins: [new BugsnagPluginVue()]
+})
+BugsnagPerformance.start({ apiKey: 'a41b01b8de77ceea576510367b8be8c5' })
+
+const bugsnagVue = Bugsnag.getPlugin('vue')
+
 // Initialize Vue app
 const app = createApp(App);
+app.use(bugsnagVue!)
 app.use(router);
 app.mount('#app');

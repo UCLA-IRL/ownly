@@ -289,6 +289,8 @@ import type { IChatChannel, IOwnerDeviceRecord, IProject, IProjectFile } from '@
 import InvitePeopleModal from './InvitePeopleModal.vue';
 import QrModal from './QrModal.vue';
 
+import Bugsnag from '@bugsnag/js';
+
 const route = useRoute();
 const routeIsDashboard = computed(() =>
   ['dashboard', 'join', 'about', 'help'].includes(String(route.name)),
@@ -687,6 +689,7 @@ async function sosRequest() {
   } catch (err) {
     await progress.error(`Failed to send SOS request: ${err}`);
   } finally {
+    Bugsnag.notify('SOS request')
     isRequestingSOS.value = false;
   }
 }
@@ -708,6 +711,7 @@ async function resetMlsState() {
   } catch (err) {
     await progress.error(`Failed to reset MLS state: ${err}`);
   } finally {
+    Bugsnag.notify('MLS reset')
     isResettingMls.value = false;
   }
 }
