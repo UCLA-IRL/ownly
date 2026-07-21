@@ -28,3 +28,5 @@ npm run lint    # eslint
 
 npm run go:wasm # build Go WebAssembly module
 ```
+
+The latest deployment uses Node version 22.
