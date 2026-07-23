@@ -13,7 +13,8 @@ let activeEngine: PdfTeXEngine | null = null;
 // 2nd try
 // let texlive_endpoint = 'https://texlive.emaily.re/';
 // 3rd try
-const texlive_endpoint = 'https://texlive.texlyre.org';
+// const texlive_endpoint = 'https://texlive.texlyre.org';
+const texlive_endpoint = 'https://bruins.cs.ucla.edu';
 
 export async function compile(project: WorkspaceProj): Promise<Uint8Array> {
   let progress: typeof Toast.Handle | undefined;
