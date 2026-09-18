@@ -5,11 +5,11 @@ package app
 import (
 	"syscall/js"
 
+	"github.com/UCLA-IRL/ownly/ndn/app/tlv"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn/svs_ps"
 	jsutil "github.com/named-data/ndnd/std/utils/js"
-	"github.com/pulsejet/ownly/ndn/app/tlv"
 )
 
 var _yjs_merge_updates = js.Global().Get("_yjs_merge_updates")

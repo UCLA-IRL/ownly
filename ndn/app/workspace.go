@@ -13,6 +13,8 @@ import (
 	"syscall/js"
 	"time"
 
+	"github.com/UCLA-IRL/ownly/ndn/app/tlv"
+	"github.com/UCLA-IRL/ownly/ndn/historylog"
 	spec_repo "github.com/named-data/ndnd/repo/tlv"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
@@ -26,7 +28,6 @@ import (
 	ndn_sync "github.com/named-data/ndnd/std/sync"
 	"github.com/named-data/ndnd/std/types/optional"
 	jsutil "github.com/named-data/ndnd/std/utils/js"
-	"github.com/pulsejet/ownly/ndn/app/tlv"
 )
 
 const (
@@ -264,7 +265,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	a.SetCmdKey(testbedSigner)
 
 	// Announce testbed key prefix for mgmt/repo operations
-	client := object.NewClient(a.engine, a.store, a.trust)
+	capture, err := a.historyCapture(idName)
+	if err != nil {
+		return api, err
+	}
+	client := historylog.WrapClient(object.NewClient(a.engine, a.store, a.trust), capture)
 
 	detectUser := wkspName.Append(enc.NewKeywordComponent("KD"))
 	detectRoot := wkspName.Append(enc.NewKeywordComponent("RD"))
@@ -432,12 +437,15 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			},
 			NotBefore: time.Now().Add(-time.Hour),
 			NotAfter:  time.Now().AddDate(50, 0, 0), // for now
-			Store:     client.Store(),               // auto-store
+			// Persist the returned wire before making it available for publication.
 		})
 		if err != nil {
 			return nil, err
 		}
 		// Publish invitation to boot group with encapsulated Data so repo can store it immediately
+		if err = historylog.PersistProducedData(client, wire); err != nil {
+			return nil, err
+		}
 		if a.bootSyncSession != nil && a.bootSyncSession.alo != nil {
 			cmd := spec_repo.RepoCmd{
 				BlobFetch: &spec_repo.BlobFetch{
@@ -1084,6 +1092,9 @@ func (a *App) signPreCert(wkspName enc.Name, identitySigner ndn.Signer, invitati
 	}
 
 	// Insert key and certificate into keychain
+	if err = a.persistIdentityHistory(identitySigner, preCertWire); err != nil {
+		return nil, userSigner, err
+	}
 	if err = a.keychain.InsertKey(userSigner); err != nil {
 		return preCertWire, userSigner, err
 	}
@@ -1226,6 +1237,9 @@ func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Sign
 	if err != nil {
 		return rootSigner, nil, fmt.Errorf("Self-sign anchor cert: %w", err)
 	}
+	if err = a.persistIdentityHistory(identitySigner, preAnchorWire, anchorWire); err != nil {
+		return rootSigner, nil, err
+	}
 	a.keychain.InsertKey(rootSigner)
 	a.keychain.InsertCert(preAnchorWire.Join())
 	a.keychain.InsertCert(anchorWire.Join())
@@ -1238,6 +1252,9 @@ func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Sign
 	listWireEnc, _ := spec.Spec{}.MakeData(listName, &ndn.DataConfig{
 		Freshness: optional.Some(time.Hour),
 	}, listContent, rootSigner)
+	if err = a.persistIdentityHistory(identitySigner, listWireEnc.Wire); err != nil {
+		return rootSigner, nil, err
+	}
 	// Network should fetch from local store
 	a.store.Put(listName, listWireEnc.Wire.Join())
 
@@ -1263,6 +1280,9 @@ func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Sign
 		return rootSigner, ownerSigner, fmt.Errorf("Sign owner cert: %w", err)
 	}
 	// Insert key and certificate into keychain
+	if err = a.persistIdentityHistory(identitySigner, ownerCertWire); err != nil {
+		return rootSigner, ownerSigner, err
+	}
 	a.keychain.InsertKey(ownerSigner)
 	a.keychain.InsertCert(ownerCertWire.Join())
 	return rootSigner, ownerSigner, nil

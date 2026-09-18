@@ -5,7 +5,7 @@ package main
 import (
 	"syscall/js"
 
-	"github.com/pulsejet/ownly/ndn/app"
+	"github.com/UCLA-IRL/ownly/ndn/app"
 )
 
 func main() {

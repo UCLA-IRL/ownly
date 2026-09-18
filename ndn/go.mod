@@ -1,4 +1,4 @@
-module github.com/pulsejet/ownly/ndn
+module github.com/UCLA-IRL/ownly/ndn
 
 go 1.25.0
 

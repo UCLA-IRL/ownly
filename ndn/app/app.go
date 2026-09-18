@@ -9,6 +9,7 @@ import (
 	"syscall/js"
 	"time"
 
+	"github.com/UCLA-IRL/ownly/ndn/historylog"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
@@ -29,6 +30,10 @@ type App struct {
 	engine   ndn.Engine
 	store    ndn.Store
 	keychain ndn.KeyChain
+
+	// Phase 3 will supply a trusted log ID. Empty means capture is disabled.
+	historyLogID  string
+	historyOutbox historylog.Outbox
 
 	// Trust config for testbed certs only
 	// In practice all trust configs are currently the same, but
@@ -83,11 +88,12 @@ func NewApp() *App {
 	}
 
 	a := &App{
-		store:        store,
-		keychain:     kc,
-		dskReqs:      make(map[string]*time.Timer),
-		bootSyncs:    make(map[string]bool),
-		joinPayloads: make(map[string][]byte),
+		store:         store,
+		keychain:      kc,
+		historyOutbox: historylog.NewJSOutbox(_ndnd_store_js, store.ClearCache),
+		dskReqs:       make(map[string]*time.Timer),
+		bootSyncs:     make(map[string]bool),
+		joinPayloads:  make(map[string][]byte),
 	}
 	a.initialize()
 	return a
@@ -132,6 +138,36 @@ func (a *App) initialize() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// historyCapture binds an operation to its original identity and configured log.
+// Phase 3 supplies historyLogID after validating the log's trust configuration.
+// Until then capture is disabled; a headless producer has no durable outbox and
+// cannot enable it. No network sender or logout cleanup belongs in this helper.
+func (a *App) historyCapture(identity enc.Name) (*historylog.Capture, error) {
+	if a.historyLogID == "" {
+		return nil, nil
+	}
+	scope, err := historylog.NewScope(identity, a.historyLogID)
+	if err != nil {
+		return nil, err
+	}
+	return historylog.NewCapture(a.historyOutbox, scope)
+}
+
+func (a *App) persistIdentityHistory(signer ndn.Signer, wires ...enc.Wire) error {
+	if a.historyLogID == "" {
+		return nil
+	}
+	identity, err := security.GetIdentityFromKeyName(signer.KeyName())
+	if err != nil {
+		return err
+	}
+	capture, err := a.historyCapture(identity)
+	if err != nil {
+		return err
+	}
+	return capture.PersistProducedData(wires...)
 }
 
 func (a *App) String() string {

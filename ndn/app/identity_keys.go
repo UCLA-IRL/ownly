@@ -255,6 +255,9 @@ func (a *App) makeOwnerSignedIdentityCert(subjectSigner ndn.Signer, ownerSigner 
 	}
 
 	certData, _, err := spec.Spec{}.ReadData(enc.NewWireView(wire))
+	if err == nil {
+		err = a.persistIdentityHistory(ownerSigner, wire)
+	}
 	return wire, certData, err
 }
 

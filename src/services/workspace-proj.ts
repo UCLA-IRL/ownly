@@ -342,7 +342,7 @@ export class WorkspaceProj {
         // Get the text content as UTF-8
         return toUtf8(doc.getText('text').toString());
       } else if (utils.isExtensionType(path, 'milkdown')) {
-        // https://github.com/pulsejet/ownly/issues/28
+        // https://github.com/UCLA-IRL/ownly/issues/28
         return Y.encodeStateAsUpdateV2(doc);
       } else if (utils.isExtensionType(path, 'excalidraw')) {
         const elements: ExcalidrawElementYMap = doc.getMap('elements');
@@ -434,7 +434,7 @@ export class WorkspaceProj {
             text.insert(0, strContent);
           });
         } else if (isMilkdown) {
-          // https://github.com/pulsejet/ownly/issues/28
+          // https://github.com/UCLA-IRL/ownly/issues/28
           Y.applyUpdateV2(doc, new Uint8Array(buffer));
         }
       } finally {

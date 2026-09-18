@@ -8,6 +8,8 @@ import (
 
 	"syscall/js"
 
+	"github.com/UCLA-IRL/ownly/ndn/app/tlv"
+	"github.com/UCLA-IRL/ownly/ndn/historylog"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
@@ -17,7 +19,6 @@ import (
 	ndn_sync "github.com/named-data/ndnd/std/sync"
 	"github.com/named-data/ndnd/std/types/optional"
 	jsutil "github.com/named-data/ndnd/std/utils/js"
-	"github.com/pulsejet/ownly/ndn/app/tlv"
 )
 
 type bootSyncSession struct {
@@ -503,13 +504,13 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 				return
 			}
 
+			// Keep track of user certs issued by this owner
+			if err := historylog.PersistProducedData(client, userCert); err != nil {
+				log.Warn(a, "Failed to store final cert in local store", "err", err, "name", userCertData.Name())
+				return
+			}
 			if err := a.keychain.InsertCert(userCert.Join()); err != nil {
 				log.Warn(a, "Failed to store final cert locally", "err", err, "name", userCertData.Name())
-			}
-
-			// Keep track of user certs issued by this owner
-			if err := client.Store().Put(userCertData.Name(), userCert.Join()); err != nil {
-				log.Warn(a, "Failed to store final cert in local store", "err", err, "name", userCertData.Name())
 			}
 
 			// Index the final cert as a peer so the Authenticated Peers
