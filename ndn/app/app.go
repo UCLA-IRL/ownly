@@ -31,7 +31,7 @@ type App struct {
 	store    ndn.Store
 	keychain ndn.KeyChain
 
-	// Phase 3 will supply a trusted log ID. Empty means capture is disabled.
+	// Phase 4 enables capture together with the sender. Empty means disabled.
 	historyLogID  string
 	historyOutbox historylog.Outbox
 
@@ -141,7 +141,7 @@ func (a *App) initialize() {
 }
 
 // historyCapture binds an operation to its original identity and configured log.
-// Phase 3 supplies historyLogID after validating the log's trust configuration.
+// Phase 4 supplies historyLogID when the sender and recovery loop are ready.
 // Until then capture is disabled; a headless producer has no durable outbox and
 // cannot enable it. No network sender or logout cleanup belongs in this helper.
 func (a *App) historyCapture(identity enc.Name) (*historylog.Capture, error) {
@@ -270,9 +270,9 @@ func (a *App) JsApi() js.Value {
 			return a.IsWorkspaceOwner(p[0].String())
 		}),
 
-		// get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
+		// get_workspace(name: string): Promise<WorkspaceAPI>;
 		"get_workspace": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			return a.GetWorkspace(p[0].String(), p[1].Bool())
+			return a.GetWorkspace(p[0].String())
 		}),
 
 		// wait_user_key(wksp: string): Promise<void>;

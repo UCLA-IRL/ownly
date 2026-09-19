@@ -112,3 +112,8 @@
 #repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sync-cfg" <= #testbed_user_cert
 #repo_cmd: #owner/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_owner_cert
 #repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_user_cert
+
+// Network-operated Merkle history log. The service prefix and permitted
+// operator certificate class are part of the common LVS, not application code.
+#merkle_log_operator: #testbed_site_cert
+#merkle_check: "ndnd"/"merkle"/"32=check"/_ <= #merkle_log_operator

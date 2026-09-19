@@ -99,7 +99,7 @@ interface NDNAPI {
   ): Promise<void>;
 
   /** Get a Workspace API */
-  get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
+  get_workspace(name: string): Promise<WorkspaceAPI>;
 }
 
 export type IdentityKeyInfo = {

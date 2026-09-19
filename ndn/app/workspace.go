@@ -241,7 +241,7 @@ func (a *App) onAccessRequest(args ndn.InterestHandlerArgs) {
 }
 
 // GetWorkspace returns a JS object representing the workspace with the given name.
-func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, err error) {
+func (a *App) GetWorkspace(groupStr string) (api js.Value, err error) {
 	if err = a.promoteIdentityAnchors(); err != nil {
 		return
 	}
@@ -269,7 +269,11 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 	if err != nil {
 		return api, err
 	}
-	client := historylog.WrapClient(object.NewClient(a.engine, a.store, a.trust), capture)
+	client, err := a.historyReader(object.NewClient(a.engine, a.store, a.trust), idName)
+	if err != nil {
+		return api, err
+	}
+	client = historylog.WrapClient(client, capture)
 
 	detectUser := wkspName.Append(enc.NewKeywordComponent("KD"))
 	detectRoot := wkspName.Append(enc.NewKeywordComponent("RD"))
@@ -586,11 +590,9 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			// Fetch the content from the network
 			ch := make(chan ndn.ConsumeState)
 			client.ConsumeExt(ndn.ConsumeExtArgs{
-				Name:             name,
-				TryStore:         true,
-				UseSignatureTime: optional.Some(true),
-				IgnoreValidity:   optional.Some(ignoreValidity),
-				Callback:         func(state ndn.ConsumeState) { ch <- state },
+				Name:     name,
+				TryStore: true,
+				Callback: func(state ndn.ConsumeState) { ch <- state },
 			})
 			state := <-ch
 			if err := state.Error(); err != nil {
@@ -804,6 +806,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 					client.ValidateExt(ndn.ValidateExtArgs{
 						Data:       args.Data,
+						RawData:    args.RawData,
 						SigCovered: args.SigCovered,
 						Callback: func(valid bool, err error) {
 							if !valid {
@@ -865,6 +868,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 
 					client.ValidateExt(ndn.ValidateExtArgs{
 						Data:       args.Data,
+						RawData:    args.RawData,
 						SigCovered: args.SigCovered,
 						Callback: func(valid bool, err error) {
 							if !valid {
@@ -914,18 +918,14 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 				InitialState: stateWire,
 
 				Svs: ndn_sync.SvSyncOpts{
-					Client:           client,
-					GroupPrefix:      svsAloGroup,
-					UseSignatureTime: optional.Some(true),
-					IgnoreValidity:   optional.Some(ignoreValidity),
+					Client:      client,
+					GroupPrefix: svsAloGroup,
 				},
 
 				Snapshot: &ndn_sync.SnapshotNodeHistory{
-					Client:           client,
-					Threshold:        SnapshotThreshold,
-					Compress:         a.CompressSnapshotYjs,
-					UseSignatureTime: optional.Some(true),
-					IgnoreValidity:   optional.Some(ignoreValidity),
+					Client:    client,
+					Threshold: SnapshotThreshold,
+					Compress:  a.CompressSnapshotYjs,
 				},
 
 				MulticastPrefix: multicastPrefix,

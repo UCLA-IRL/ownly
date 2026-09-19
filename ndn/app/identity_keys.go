@@ -687,9 +687,6 @@ func (a *App) localTrustAnchorCertNames() []string {
 				if ctype, ok := certData.ContentType().Get(); !ok || ctype != ndn.ContentTypeKey {
 					continue
 				}
-				if security.CertIsExpired(certData) {
-					continue
-				}
 				valid, err := sig.ValidateData(certData, sigCov, certData)
 				if err != nil || !valid {
 					continue
@@ -726,9 +723,6 @@ func (a *App) peerTrustAnchorCertNames() []string {
 			continue
 		}
 		if ctype, ok := certData.ContentType().Get(); !ok || ctype != ndn.ContentTypeKey {
-			continue
-		}
-		if security.CertIsExpired(certData) {
 			continue
 		}
 		valid, err := sig.ValidateData(certData, sigCov, certData)

@@ -31,9 +31,8 @@ func (a *App) NewBootSyncAlo(client ndn.Client, nodeName, group enc.Name, initia
 		Name:         nodeName,
 		InitialState: initialState,
 		Svs: ndn_sync.SvSyncOpts{
-			Client:         client,
-			GroupPrefix:    group,
-			IgnoreValidity: optional.Some(false),
+			Client:      client,
+			GroupPrefix: group,
 		},
 		// Data in boot sync is small; no snapshot needed.
 		Snapshot:        nil,
@@ -464,9 +463,9 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 			}, 1)
 			client.ValidateExt(ndn.ValidateExtArgs{
 				Data:              args.Data,
+				RawData:           args.RawData,
 				SigCovered:        args.SigCovered,
 				UseDataNameFwHint: optional.Some(true),
-				IgnoreValidity:    optional.Some(false),
 				Callback: func(valid bool, err error) {
 					validCh <- struct {
 						valid bool
