@@ -14,10 +14,10 @@ import (
 // synchronous js.FuncOf callback, so the browser can resolve the promises.
 type JSOutbox struct {
 	api         js.Value
-	afterCommit func()
+	afterCommit func(Scope)
 }
 
-func NewJSOutbox(api js.Value, afterCommit func()) *JSOutbox {
+func NewJSOutbox(api js.Value, afterCommit func(Scope)) *JSOutbox {
 	return &JSOutbox{api: api, afterCommit: afterCommit}
 }
 
@@ -34,7 +34,7 @@ func (s *JSOutbox) CommitProduced(scope Scope, packets []Packet) error {
 		return fmt.Errorf("history commit: %w", err)
 	}
 	if len(packets) > 0 && s.afterCommit != nil {
-		s.afterCommit()
+		s.afterCommit(scope)
 	}
 	return nil
 }

@@ -2,7 +2,7 @@
 
 Status: Phases 1 and 2 implemented, tested, and reviewed on `merkle`, created from `dev`
 at `df6d750`. The user-reviewed revisions are incorporated: maximum batch age is
-10 seconds, and Phase 2 provides durable outbox persistence before producer logging
+5 seconds, and Phase 2 provides durable outbox persistence before producer logging
 is enabled. Phase 2's subagent review found no unresolved correctness or minimality
 issues. Phase 3 is accepted. Capture remains disabled until Phase 4 connects
 trusted configuration to a working sender and recovery loop.
@@ -108,7 +108,7 @@ decisions. Logging a self-signed anchor cannot establish or restore that trust.
    in either case. Narrow the wrapper and related invitation/precertificate hooks
    together once that boundary is chosen.
 3. Keep durable packet/outbox commit, recovery, acknowledged dequeue, bounded
-   batching, and the **10-second maximum batch age** for retained historical data.
+   batching, and the **5-second maximum batch age** for retained historical data.
    App termination during backoff is a real requirement already requested by the
    user; narrowing capture does not remove the need for persistence.
 4. Adjust the existing local-only tests: excluded setup traffic must not enqueue
@@ -164,7 +164,7 @@ Maintain one hash queue per submitting user/log pair, shared across that user's
 documents. The timer runs after actual Data production, independently of the
 existing per-document Yjs `Bundler` in `src/utils/bundler.ts`.
 
-Use a **1-second idle delay** and the user-selected **10-second maximum batch
+Use a **1-second idle delay** and the user-selected **5-second maximum batch
 age**, both configurable. These are Ownly settings, not protocol requirements.
 For the oldest pending hash enqueued at `firstQueuedAt`, each new unique hash
 schedules:
@@ -176,7 +176,7 @@ flushAt = min(now + idleDelay, firstQueuedAt + maxBatchAge)
 Use a monotonic clock for elapsed time. New arrivals may move the idle deadline,
 but must never reset `firstQueuedAt` or extend the maximum-age deadline. Duplicate
 hashes do not postpone submission. For example, continuous production beginning
-at time 0 still makes the batch due at time 10 seconds.
+at time 0 still makes the batch due at time 5 seconds.
 
 Flush earlier when a batch reaches the encoded packet-size budget, on an explicit
 flush, or before a known authorizing certificate expires, allowing time for log
@@ -238,7 +238,7 @@ The current Phase 2 commit supplies the capture hooks and durable outbox, but
 `historyLogID` is unset: production capture and network appends are not enabled.
 Phase 3 adds the reader and trust configuration. Phase 4 enables capture and
 connects the outbox to authenticated `Append` calls, with the 1-second idle delay
-and 10-second maximum batching age. Submit hashes of the signed Data wires to the
+and 5-second maximum batching age. Submit hashes of the signed Data wires to the
 Merkle log; the encrypted content continues through existing SVS/repository
 storage. Do not add a second raw-Yjs upload path.
 
@@ -278,7 +278,7 @@ snapshot was timely. Cache freshness and packet pruning are separate availabilit
 concerns; a Merkle hash does not retain or recover deleted content.
 
 Phase 4 should flush before a known certificate deadline rather than waiting the
-full 10 seconds. This only reduces avoidable delay: suspension or log outages can
+full 5 seconds. This only reduces avoidable delay: suspension or log outages can
 still miss the ingestion window. Do not turn either failure into an expiry bypass.
 
 Local Yjs rows contain application content and are compacted; they cannot
@@ -356,7 +356,7 @@ keeps upstream wire/status types out of the batching core.
 | Option                    | Initial value | Meaning                                                                                                    |
 | ------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
 | Idle delay                | 1 second      | Wait after the last newly queued digest.                                                                   |
-| Maximum batch age         | 10 seconds    | Fixed deadline from the oldest digest in the pending batch; updated by user review.                        |
+| Maximum batch age         | 5 seconds     | Fixed deadline from the oldest digest in the pending batch; updated by user review.                        |
 | Maximum hashes per batch  | 64            | Bound one submission; reaching this count makes it ready immediately.                                      |
 | Maximum unresolved hashes | 4,096         | Bound queued plus in-flight digests; reject a new unique digest with an explicit capacity error when full. |
 
@@ -392,7 +392,7 @@ idle delay, and pending capacity below batch capacity are rejected.
    unresolved hashes without claiming they were logged. Phase 2's durable outbox
    remains authoritative across shutdown; Phase 4 handles bounded draining.
 
-The 10-second bound makes a batch **ready** on time. An existing in-flight request,
+The 5-second bound makes a batch **ready** on time. An existing in-flight request,
 paused failure state, or suspended runtime can delay the actual attempt; readiness
 must not be reported as successful logging. When the sender becomes available,
 an already-due batch should proceed without another idle delay. Hashes left after
@@ -401,7 +401,7 @@ a size-triggered split retain their original age.
 **Verification:** use deterministic time control, such as Go 1.25's
 `testing/synctest`, and a controllable fake submitter rather than sleeps or a live
 log. Cover idle expiry, repeated extension, continuous production reaching the
-10-second cap, duplicate traffic, count-triggered flushing, capacity errors,
+5-second cap, duplicate traffic, count-triggered flushing, capacity errors,
 enqueues during submission, partial acknowledgement, full failure, explicit retry,
 empty flush, shutdown, and late/duplicate callbacks. Include contention coverage
 under the race detector. These tests exercise observable scheduling and retention
@@ -430,7 +430,7 @@ window over Phase 2's durable outbox. Commit packet/outbox records before enqueu
 their digests; leave rows pending while requests are in flight. The transport
 adapter must durably dequeue acknowledged entries before reporting completion to
 the batcher. If dequeue fails, report a failure and retry safely. Restore pending
-rows on restart and explicitly flush them without another 10-second debounce.
+rows on restart and explicitly flush them without another 5-second debounce.
 No monotonic timestamp needs to survive restart. When the scheduling window is
 full, leave additional rows in the outbox and load them as capacity becomes free;
 the in-memory limit is not permission to discard durable work.
@@ -474,7 +474,7 @@ and recovery/acknowledgement primitives. Exercise them with explicit test scopes
 and a fake sender. Application capture stays disabled through Phase 3's reader
 configuration; Phase 4 enables it with live submission and the recovery pump.
 Keep the current NDNd dependency and Phase 1's 1-second idle
-delay / **10-second maximum batch age**. This phase does not introduce a log service,
+delay / **5-second maximum batch age**. This phase does not introduce a log service,
 change certificate validation, or add a settings UI.
 
 #### Why the existing producer store cannot guarantee persistence
@@ -673,7 +673,7 @@ Use the following observable outcomes, rather than only checking internal helper
 | A known signed wire; the same content with different signature bytes                          | Hashes match SHA-256 of the complete original wires and differ when the wire differs.                                                                  |
 | Multi-segment object, metadata, snapshots/indexes, and direct certificates/invitations        | Every selected exact wire has a pending entry before the producer reports success or publishes it.                                                     |
 | Signing failure partway through an object; rejected JS commit; quota/transaction abort        | No partial packet/outbox transaction is committed, no newly staged wire enters the shared cache, and the producer returns an error.                    |
-| Kill/reopen during the 1-second idle delay or before the 10-second maximum age                | All successfully committed rows survive. A recovery test feeds them to the Phase 1 batcher with explicit `Flush`, without a new debounce period.       |
+| Kill/reopen during the 1-second idle delay or before the 5-second maximum age                 | All successfully committed rows survive. A recovery test feeds them to the Phase 1 batcher with explicit `Flush`, without a new debounce period.       |
 | Kill after fake dispatch or remote acceptance but before durable dequeue                      | Rows remain pending; resubmission and a fake `DUPLICATE` acknowledgement safely dequeue them. Signed packets remain stored. No live log is required.   |
 | Partial acknowledgement, rejected dequeue, or late completion from a previous sender          | Only committed matching acknowledgements dequeue entries; failed/unacknowledged work and newer replacement rows survive. Signed packets remain stored. |
 | More than 4,096 pending rows; switch user or log; two database instances writing concurrently | Bounded pages recover all work without cross-scope submission, eviction, or duplicate pending rows within one scope.                                   |
@@ -740,7 +740,7 @@ The subagent reviewed the final implementation for correctness and minimal chang
 and reported **no unresolved findings**. Application capture is deliberately dormant
 through Phase 3's reader configuration; the real sender, automatic recovery
 pump, and network retries activate capture in Phase 4. The browser tests use a fake acknowledged
-log result and do not claim live log ingestion. The **10-second maximum batch age**
+log result and do not claim live log ingestion. The **5-second maximum batch age**
 and 1-second idle delay are unchanged.
 
 **Minimality revision — 2026-09-17:** at the user's request, removed unrelated
@@ -836,7 +836,7 @@ Ownly carries no scheduler workaround or local module replacement.
    history reader must not populate the existing capture-enabling `historyLogID`.
    Keep a separate read configuration/policy. Phase 4 explicitly enables capture
    only when the sender and recovery loop are ready. Preserve the 1-second idle
-   delay and 10-second maximum batch age.
+   delay and 5-second maximum batch age.
 
 Removing Magic means existing expired packets without timely evidence will fail
 validation. Phase 3 cannot retroactively establish their signing time. Existing
@@ -968,36 +968,153 @@ Keep this document uncommitted and Merkle tests locally ignored.
 
 ### Phase 4 — Connect producer submission and recovery
 
-**Goal:** connect the durable outbox, collector, and queue to real authenticated
-log appends. Phase 2 persistence is a prerequisite for enabling this producer path.
+**Plan status:** implemented and reviewed, including the approved shared
+1-second/5-second batching configuration. Failure retry remains unchanged.
 
-**Planned changes:** implement an adapter around NDNd `Client.Append`; map validated
-results to queue acknowledgements; enforce encoded request and worst-case response
-size bounds. Define the response-signing overhead bound from the accepted log
-configuration. Split batches without losing order/age, add request deadlines and
-capped retry backoff with jitter, and guard against late callbacks after timeout.
-Own queue creation and cleanup at the user/log lifecycle, with explicit handling
-of identity/workspace changes and reconnects. Dispatch from committed outbox rows
-and commit durable dequeue before completing the in-memory batch.
-Enable the existing capture hooks for live Yjs publications as well as internally
-produced snapshots, indexes, metadata, blobs, and retained authorization packets.
-No separate frontend Yjs logging hook is needed. Flush early for known certificate
-deadlines without treating the 10-second batch-age limit as an ingestion guarantee.
+**Goal:** activate browser-side capture and submit its durable hashes to the
+network-operated Merkle log. A successful append durably dequeues only the hashes
+that the log accepted or already contains. The stored signed Data remains in the
+packet store for later verification.
 
-**Checks and exit criteria:** a local log receives hashes under burst and continuous
-production; requests fit the wire limit; mixed success/duplicate/failure results
-retain exactly the unresolved hashes; delayed or lost responses can be retried
-safely. Test outage capacity handling, sustained traffic during failures, and
-orderly shutdown with a bounded drain. Kill and restart the producer during the
-10-second batching window and after log acceptance but before durable dequeue;
-confirm automatic recovery and safe duplicate handling against a real local log.
-Verify that a live Yjs edit produces logged publication hashes before any snapshot
-is created, and that snapshot creation submits its own distinct signed packet
-hashes together with the index/discovery packets. A late reader must recover the
-snapshot plus the subsequent updates after certificate expiry using those proofs.
-Exclude logging packets from collection. Document that durable recovery and queue
-readiness do not guarantee ingestion before certificate expiry. Complete Go/WASM
-and subagent checks.
+#### Configuration and trust
+
+Use `/ndnd/merkle` as the initial browser log endpoint, matching the Phase 3 LVS
+check rule. Give this configuration a stable scope identifier
+`ndnd-merkle/testbed-site-v1`; it binds pending rows to this endpoint and its
+testbed-site operator policy. Future changes to the endpoint or operator policy
+must use a new identifier rather than retargeting an existing row.
+
+Extend `schema.trust` with two text rules and rebuild `schema.tlv`:
+
+```text
+#merkle_append_request:  "ndnd"/"merkle"/"32=append"/#user/_ <= #testbed_user_cert
+#merkle_append_response: "ndnd"/"merkle"/"32=append"/_ <= #merkle_log_operator
+```
+
+The first rule lets the ordinary trust configuration select the producer's
+currently valid testbed certificate for the command Data. The second validates
+the signed command response from the same operator class that signs `check`
+responses. The sender uses the normal `SchemaBytes` trust configuration; it never
+uses the historical-expiry callback to validate an append response.
+
+#### Sender and durable queue
+
+Add one private `app/history_sender.go` implementation. It owns one sender per
+`historylog.Scope` (identity plus the stable configuration identifier), while the
+application owns the registry for its lifetime. A scope is created when capture
+is first needed and is reused by all open workspaces for that identity. Workspace
+shutdown does not discard the sender or its pending rows.
+
+The sender obtains a normal object client, wraps it in upstream
+`merklelog.NewClient`, and supplies the current identity as requester. It passes
+the existing batcher's hashes directly to `Client.Append`; it does not re-read,
+re-encode, or upload application payloads.
+
+The frontend Yjs `Bundler` is the source of normal editing activity. It merges
+individual document updates and calls `pub_yjs_delta`; that Go entry point calls
+`SvsALO.Publish` through the producer-wrapped client. The wrapper therefore
+persists the signed Yjs publication in the outbox before the sender sees its
+hash. The same path also captures other public workspace Data, so the sender
+uploads all eligible pending hashes together. Under the shared upload timer, a
+Yjs publication participates in the same cadence as other newly captured Data;
+it does not select a separate upload or change hash eligibility.
+
+After a validated append response:
+
+1. Treat `OK` and `Duplicate` as log acknowledgement; retain `Failed` hashes.
+2. Call `Outbox.Ack` for the corresponding row ID/hash pairs before completing
+   the batcher callback.
+3. If durable dequeue fails, complete the whole batch with an error. A later
+   append may be duplicate, which is safe.
+4. Notify the batcher only after the durable operation settles, so its in-memory
+   state never claims an acknowledgement that IndexedDB has not committed.
+
+`JSOutbox` will report a successful `CommitProduced` with its scope. The app uses
+that notification to wake the matching sender. Startup and reconnect also derive
+scopes from local identities, create or wake the matching sender, and scan their
+bounded first outbox page. Reconnect recovery runs outside the browser connection
+callback, so an IndexedDB read cannot block it. A killed browser resumes durable
+rows without requiring another edit. The outbox remains the source of truth; the
+batcher is only a bounded working set.
+
+#### Timing, bounds, and failures
+
+Use the history batcher's shared 1-second idle delay and 5-second maximum age,
+with 64 hashes per batch, one in-flight request per scope, and a 4096-hash
+working-set limit. Each newly captured publication, including a Yjs bundle,
+restarts the 1-second idle delay, so the next upload occurs one second after the
+newest edit. The first pending publication still forces an upload within 5
+seconds. This single configuration applies to every default history batcher.
+
+At 64 SHA-256 hashes both the append request and its worst-case response are only
+a few KiB before NDN signatures, so the existing count bound is sufficient; add
+no separate packet-size estimator or splitter.
+
+The upstream command client already has the request lifetime and ignores no
+validation errors. Do not layer a second timeout around it. On transport,
+validation, response, or durable-dequeue failure, the existing batcher retains
+the rows and pauses. The separate failure retry remains in-memory exponential:
+1 second, doubling to a 1-minute ceiling, and resetting after a fully
+acknowledged append. User edits do not change that failure-retry timer. A browser
+restart starts recovery immediately from durable rows; the retry timer itself
+need not be persisted.
+
+Capture is enabled only in `NewApp`, where IndexedDB provides a durable outbox.
+`NewNodeApp` remains consumer-only. Logging packets are never captured because the
+append client is separate from producer-wrapped workspace clients. A durable row
+and retry do not guarantee log ingestion before the signing certificate expires.
+
+#### Planned code changes
+
+| File | Change |
+| --- | --- |
+| `ndn/app/schema.trust`, `ndn/app/schema.tlv` | Add append request/response authorization and compile the embedded LVS. |
+| `ndn/app/history_reader.go` | Share the strict, ordinary-trust log-client construction with the sender and set the initial endpoint configuration. |
+| `ndn/app/history_sender.go` | Add the private scope registry, bounded outbox scan, append-result-to-durable-ack mapping, wakeup, reconnect recovery, use the shared history-batcher timing, and add the separate capped exponential failure retry. |
+| `ndn/app/app.go`, `testbed.go` | Enable the fixed browser history configuration, connect the JS outbox wakeup, and resume local-identity scopes after connectivity is established. Keep Node capture disabled. |
+| `ndn/historylog/outbox_js.go` | Include the completed scope in its existing post-commit callback. |
+| Existing local Merkle test files | Add real append/recovery cases; keep them ignored and out of commits. |
+| `docs/history-verification.md` | Record the accepted design, implementation, verification, and final review; keep this document uncommitted. |
+
+No new frontend API, user preference, database migration, raw-Yjs upload,
+per-workspace sender, log-specific trust store, custom request-timeout layer, or
+packet-size abstraction is planned.
+
+#### Implementation and focused verification
+
+The implementation adds only the private sender, the scope-aware JS-outbox
+wakeup, append LVS rules, reconnect recovery, and the shared 1-second/5-second
+batcher defaults. Local ignored tests cover the generic batcher's five-second
+default bound and the sender's mocked-log cases. The WASM tests
+compile the embedded schema, verify its append signing rules, and use a mocked
+log that returns `OK`, `Duplicate`, and `Failed` for one batch. They confirm that
+the first two rows are durably dequeued and the failed row remains pending. A
+separate controlled stale-read test overlaps an acknowledgement with a later
+generation of the same hash and confirms that the later row also dequeues.
+Native historylog tests and frontend type checking also pass. The browser
+IndexedDB harness remains available for its real-store restart check; the mocked
+log is the Phase 4 network test fixture.
+
+#### Checks and exit criteria
+
+- A current testbed user certificate signs a real append command, and the
+  testbed-site operator's signed response validates under the compiled LVS.
+- `OK` and `Duplicate` dequeue exactly their matching rows after IndexedDB commits;
+  `Failed`, malformed, unsigned, or wrong-operator responses retain rows.
+- A burst retains the 1-second debounce; continuous production flushes by
+  5 seconds; 64 hashes produce one request. A production event while a request
+  is in flight stays queued for its own batch.
+- Transport failure, an append failure result, and IndexedDB dequeue failure leave
+  the affected hashes durable and retry with the capped delay. A valid response
+  followed by browser termination before dequeue resubmits safely as duplicate.
+- Restart and reconnect discover outstanding rows for local identities and submit
+  them without a new user edit. Opening multiple workspaces under one identity
+  does not create concurrent senders for the same scope.
+- A live Yjs publication, snapshot, snapshot index, and required retained
+  authorization packet enter the existing capture path exactly once. The append
+  command and response do not enter it.
+- Run focused native and WASM tests, the real-browser IndexedDB restart harness,
+  the matching WASM build, frontend type checking, and the final subagent review.
 
 ### Phase 5 — Historical replay and failure handling
 

@@ -110,6 +110,7 @@ func (a *App) ConnectTestbed() error {
 	face := face.NewWasmWsFace(endpoint, false)
 	face.OnUp(func() {
 		_ndnd_conn_change_js.Invoke(true, endpoint)
+		go a.resumeHistorySenders()
 	})
 	face.OnDown(func() {
 		_ndnd_conn_change_js.Invoke(false, endpoint)

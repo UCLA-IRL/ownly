@@ -60,7 +60,7 @@ type Batcher struct {
 	closed      bool
 }
 
-// NewBatcher creates an empty queue with a one-second idle delay, ten-second
+// NewBatcher creates an empty queue with a one-second idle delay, five-second
 // maximum batch age, 64 hashes per batch, and 4096 unresolved hashes by default.
 // submit and onError must be non-nil and must not block. Neither runs under the
 // queue lock, so callbacks may call back into the batcher.
@@ -69,7 +69,7 @@ func NewBatcher(opts Options, submit SubmitFunc, onError func(error)) (*Batcher,
 		opts.IdleDelay = time.Second
 	}
 	if opts.MaxBatchAge == 0 {
-		opts.MaxBatchAge = 10 * time.Second
+		opts.MaxBatchAge = 5 * time.Second
 	}
 	if opts.MaxBatchHashes == 0 {
 		opts.MaxBatchHashes = 64

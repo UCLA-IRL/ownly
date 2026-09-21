@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"fmt"
 	"runtime"
+	"sync"
 	"syscall/js"
 	"time"
 
@@ -31,9 +32,12 @@ type App struct {
 	store    ndn.Store
 	keychain ndn.KeyChain
 
-	// Phase 4 enables capture together with the sender. Empty means disabled.
-	historyLogID  string
-	historyOutbox historylog.Outbox
+	// The browser's durable capture and sender are bound to this configuration.
+	// Empty leaves capture disabled for the consumer-only Node app.
+	historyLogID   string
+	historyOutbox  historylog.Outbox
+	historyMu      sync.Mutex
+	historySenders map[string]*historySender
 
 	// Trust config for testbed certs only
 	// In practice all trust configs are currently the same, but
@@ -88,13 +92,18 @@ func NewApp() *App {
 	}
 
 	a := &App{
-		store:         store,
-		keychain:      kc,
-		historyOutbox: historylog.NewJSOutbox(_ndnd_store_js, store.ClearCache),
-		dskReqs:       make(map[string]*time.Timer),
-		bootSyncs:     make(map[string]bool),
-		joinPayloads:  make(map[string][]byte),
+		store:          store,
+		keychain:       kc,
+		historyLogID:   historyLogScopeID,
+		historySenders: make(map[string]*historySender),
+		dskReqs:        make(map[string]*time.Timer),
+		bootSyncs:      make(map[string]bool),
+		joinPayloads:   make(map[string][]byte),
 	}
+	a.historyOutbox = historylog.NewJSOutbox(_ndnd_store_js, func(scope historylog.Scope) {
+		store.ClearCache()
+		a.wakeHistorySender(scope)
+	})
 	a.initialize()
 	return a
 }
@@ -141,9 +150,8 @@ func (a *App) initialize() {
 }
 
 // historyCapture binds an operation to its original identity and configured log.
-// Phase 4 supplies historyLogID when the sender and recovery loop are ready.
-// Until then capture is disabled; a headless producer has no durable outbox and
-// cannot enable it. No network sender or logout cleanup belongs in this helper.
+// The browser enables capture through its IndexedDB-backed outbox. A headless
+// producer has no durable outbox and therefore leaves capture disabled.
 func (a *App) historyCapture(identity enc.Name) (*historylog.Capture, error) {
 	if a.historyLogID == "" {
 		return nil, nil
@@ -151,6 +159,9 @@ func (a *App) historyCapture(identity enc.Name) (*historylog.Capture, error) {
 	scope, err := historylog.NewScope(identity, a.historyLogID)
 	if err != nil {
 		return nil, err
+	}
+	if err = a.ensureHistorySender(identity, scope); err != nil {
+		log.Warn(a, "History sender is not ready; durable capture will recover later", "err", err)
 	}
 	return historylog.NewCapture(a.historyOutbox, scope)
 }

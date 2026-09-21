@@ -117,3 +117,5 @@
 // operator certificate class are part of the common LVS, not application code.
 #merkle_log_operator: #testbed_site_cert
 #merkle_check: "ndnd"/"merkle"/"32=check"/_ <= #merkle_log_operator
+#merkle_append_request: "ndnd"/"merkle"/"32=append"/#user/_ <= #testbed_user_cert
+#merkle_append_response: "ndnd"/"merkle"/"32=append"/_ <= #merkle_log_operator
