@@ -158,7 +158,9 @@
               <td>
                 <input type="checkbox" :checked="selectedPeers.has(peer.certName)" @change="togglePeer(peer.certName)" />
               </td>
-              <td class="name-col"><code :title="peer.identityTitle">{{ peer.identityLabel }}</code></td>
+              <td class="name-col">
+                <code :title="peer.identityTitle">{{ peer.identityLabel }}</code>
+              </td>
               <td class="name-col"><code :title="peer.keyIdTitle">{{ peer.keyIdLabel }}</code></td>
               <td><span :title="peer.createdTitle">{{ peer.createdLabel }}</span></td>
               <td class="has-text-right actions-stack">

@@ -63,4 +63,16 @@ export const GlobalBus = new EventEmitter() as TypedEmitter<{
     preCertKeyName: string,
     payload: Uint8Array,
   ) => void;
+
+  /**
+   * Event when a wkspKey in the local keychain has been revoked.
+   * Payload is the revocation record from the Go side. v2 drops
+   * publisher/boot_time/seq_num — those were SVS-AVO-specific.
+   */
+  'cert-revoked': (record: {
+    reason: number;
+    invalidity_time: number;
+    cert_hash: string;
+    cert_name: string;
+  }) => void;
 }>;

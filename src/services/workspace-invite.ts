@@ -2,7 +2,7 @@ import * as utils from '@/utils';
 import * as Y from 'yjs';
 
 import type { Router } from 'vue-router';
-import type { WorkspaceAPI, MlsRefPub } from '@/services/ndn';
+import ndn, { type WorkspaceAPI, type MlsRefPub } from '@/services/ndn';
 import type { SvsProvider } from '@/services/svs-provider';
 import type { IOwnerDeviceRecord, IProfile, IWkspStats } from '@/services/types';
 import  { OpenMlsLiteClient, OpenMlsLiteGroup } from '@/services/openmls-lite';
@@ -395,6 +395,14 @@ export class WorkspaceInviteManager {
     return `${pub.publisher}|${pub.boot_time}|${pub.seq_num}`;
   }
 
+  // SVS sequence numbers are comparable only within one publisher session.
+  private static compareMlsRefPubs(a: MlsRefPub, b: MlsRefPub): number {
+    if (a.boot_time !== b.boot_time) return a.boot_time - b.boot_time;
+    if (a.publisher < b.publisher) return -1;
+    if (a.publisher > b.publisher) return 1;
+    return a.seq_num - b.seq_num;
+  }
+
   private uniqueOrdered(pubs: MlsRefPub[]): MlsRefPub[] {
     const out: MlsRefPub[] = [];
     for (const p of pubs) {
@@ -403,22 +411,16 @@ export class WorkspaceInviteManager {
       this.seenMlsPub.add(key);
       out.push(p);
     }
-    out.sort((a, b) =>
-      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
-    );
+    out.sort(WorkspaceInviteManager.compareMlsRefPubs);
     return out;
   }
 
   private orderedPendingCommits(): MlsRefPub[] {
-    return [...this.pendingCommitRefs].sort((a, b) =>
-      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
-    );
+    return [...this.pendingCommitRefs].sort(WorkspaceInviteManager.compareMlsRefPubs);
   }
 
   private orderedPendingOwnerRecoveryKeyPackages(): MlsRefPub[] {
-    return [...this.pendingOwnerRecoveryKpRefs].sort((a, b) =>
-      a.boot_time === b.boot_time ? a.seq_num - b.seq_num : a.boot_time - b.boot_time,
-    );
+    return [...this.pendingOwnerRecoveryKpRefs].sort(WorkspaceInviteManager.compareMlsRefPubs);
   }
 
   private enqueuePendingOwnerRecoveryKeyPackage(pub: MlsRefPub): void {
@@ -1241,6 +1243,7 @@ export class WorkspaceInviteManager {
     const group = this.mlsGroup;
     if (!group) {
       if (!wasAuthorized) throw new Error(`Member ${name} not found`);
+      await this.publishIdentityRevocations(name, 9, 0);
       this.inviteeProfiles.delete(name);
       await this.deletePeerIdentityEntries(name);
       return;
@@ -1250,6 +1253,7 @@ export class WorkspaceInviteManager {
     const indexes = group.memberIndexesByIdentityPrefix(encoder.encode(accountIdentityPrefix(name)));
     if (!indexes.length) {
       if (!wasAuthorized) throw new Error(`Member ${name} not found`);
+      await this.publishIdentityRevocations(name, 9, 0);
       this.inviteeProfiles.delete(name);
       await this.deletePeerIdentityEntries(name);
       return;
@@ -1269,10 +1273,55 @@ export class WorkspaceInviteManager {
     );
     await this.provider.svs.pub_mls_commit_ref(name, blob, sessionId);
 
+    // Publish Revocation records for every peer cert of the removed
+    // identity (reason 9, privilegeWithdrawn, InvalidityTime 0).
+    // Best-effort: partial failure emits wksp-error; the MLS remove
+    // is not rolled back (past the point of no return).
+    await this.publishIdentityRevocations(name, 9, 0);
+
     // remove from authorization map
     this.inviteeProfiles.delete(name);
     await this.deletePeerIdentityEntries(name);
     await this.notifyOwnerSessionAdvanced(sessionId);
+  }
+
+  private async publishIdentityRevocations(
+    identity: string,
+    reason: number,
+    invalidityTime: number,
+  ): Promise<{ eligible: number; published: number; failed: number; enumerationFailed: boolean }> {
+    const result = { eligible: 0, published: 0, failed: 0, enumerationFailed: false };
+    try {
+      const certNames = await ndn.api.list_workspace_certs(identity);
+      result.eligible = certNames.length;
+      for (const certName of certNames) {
+        try {
+          await ndn.api.revoke_cert(certName, reason, invalidityTime);
+          result.published += 1;
+        } catch (err) {
+          console.warn(`Failed to publish revocation for ${certName}`, err);
+          result.failed += 1;
+        }
+      }
+    } catch (err) {
+      console.warn(`Failed to enumerate peer certs for ${identity}`, err);
+      result.enumerationFailed = true;
+      result.failed += 1;
+    }
+    if (result.enumerationFailed) {
+      GlobalBus.emit('wksp-error', new Error(
+        `Removed ${identity}, but workspace-key certificate enumeration failed.`,
+      ));
+    } else if (result.failed > 0) {
+      GlobalBus.emit('wksp-error', new Error(
+        `Removed ${identity}, but ${result.failed} of ${result.eligible} revocation record(s) failed to publish.`,
+      ));
+    } else if (result.eligible === 0) {
+      GlobalBus.emit('wksp-error', new Error(
+        `Removed ${identity}, but no workspace-key certificates were available to revoke.`,
+      ));
+    }
+    return result;
   }
 
   public async removeOwnerDevice(deviceId: string): Promise<void> {

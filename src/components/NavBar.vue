@@ -139,6 +139,12 @@
             </a>
           </li>
           <li>
+            <a @click="showMembersModal = true">
+              <FontAwesomeIcon class="mr-1" :icon="faUserShield" size="sm" />
+              Manage members
+            </a>
+          </li>
+          <li>
             <a @click="showAdvancedSettings = !showAdvancedSettings">
               <FontAwesomeIcon class="mr-1" :icon="faGear" size="sm" />
               {{ showAdvancedSettings ? 'Hide advanced settings' : 'Advanced settings' }}
@@ -250,6 +256,7 @@
     <AddChannelModal :show="showChannelModal" @close="showChannelModal = false" />
     <AddProjectModal :show="showProjectModal" @close="showProjectModal = false" />
     <InvitePeopleModal :show="showInviteModal" @close="showInviteModal = false" />
+    <WorkspaceMembers :show="showMembersModal" @close="showMembersModal = false" />
     <QrModal :show="showIdentity" @close="showIdentity = false" />
   </aside>
 </template>
@@ -274,6 +281,7 @@ import {
   faMoon,
   faSun,
   faUsers,
+  faUserShield,
 } from '@fortawesome/free-solid-svg-icons';
 import { faGithub } from '@fortawesome/free-brands-svg-icons';
 
@@ -288,6 +296,7 @@ import { Toast } from '@/utils/toast';
 import type { IChatChannel, IOwnerDeviceRecord, IProject, IProjectFile } from '@/services/types';
 import InvitePeopleModal from './InvitePeopleModal.vue';
 import QrModal from './QrModal.vue';
+import WorkspaceMembers from './home/WorkspaceMembers.vue';
 
 import Bugsnag from '@bugsnag/js';
 
@@ -303,6 +312,7 @@ const canResizeSidebar = computed(() => routeIsWorkspace.value);
 const showChannelModal = ref(false);
 const showProjectModal = ref(false);
 const showInviteModal = ref(false);
+const showMembersModal = ref(false);
 const showIdentity = ref(false);
 const showAdvancedSettings = ref(false);
 const isResettingMls = ref(false);

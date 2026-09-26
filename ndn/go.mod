@@ -28,3 +28,5 @@ require (
 	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+replace github.com/named-data/ndnd => github.com/Harsh23Kashyap/ndnd v0.0.0-20260921145730-9a13ec829306

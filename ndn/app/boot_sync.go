@@ -214,7 +214,8 @@ func (a *App) handleBootIdentityCert(data ndn.Data, dataWire enc.Wire) {
 		return
 	}
 
-	_, err := a.importPeerCerts([][]byte{dataWire.Join()}, peerCertImportOpts{
+	wireBytes := dataWire.Join()
+	_, err := a.importPeerCerts([][]byte{wireBytes}, peerCertImportOpts{
 		Published: true,
 		Group:     a.bootSyncSession.group,
 	})
@@ -232,6 +233,10 @@ func (a *App) participantSub(client ndn.Client) error {
 
 	ownerName, _ := enc.NameFromStr("32=owner")
 	a.bootSyncSession.alo.SubscribePublisher(ownerName, func(pub ndn_sync.SvsPub) {
+		if a.handleRevocationPub(client, a.bootSyncSession.group.Prefix(-1), pub) {
+			a.PersistBootState(pub.State)
+			return
+		}
 		// Parsing
 		data, _, err := spec.Spec{}.ReadData(enc.NewWireView(pub.Content))
 		if err != nil {
@@ -260,11 +265,12 @@ func (a *App) participantSub(client ndn.Client) error {
 
 		// We push every final cert we receive into the keychain, including those belong to others.
 		log.Info(a, "Received final cert", "name", data.Name())
-		if err := a.keychain.InsertCert(pub.Content.Join()); err != nil {
+		wireBytes := pub.Content.Join()
+		if err := a.keychain.InsertCert(wireBytes); err != nil {
 			log.Error(a, "Failed to insert cert", "err", err)
 			return
 		}
-		if err := client.Store().Put(data.Name(), pub.Content.Join()); err != nil {
+		if err := client.Store().Put(data.Name(), wireBytes); err != nil {
 			log.Warn(a, "Failed to store final cert in local store", "err", err, "name", data.Name())
 		}
 		log.Info(a, "Inserted and stored final cert", "name", data.Name())
@@ -366,6 +372,10 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 	// 1. participant join payload carrying user precert full name (+ optional app payload),
 	// 2. user final cert, 3. repo command to fetch invitation
 	a.bootSyncSession.alo.SubscribePublisher(enc.Name{}, func(pub ndn_sync.SvsPub) {
+		if a.handleRevocationPub(client, wkspName, pub) {
+			a.PersistBootState(pub.State)
+			return
+		}
 		content := pub.Content
 		// Case 1: content is a final cert (encapsulated Data).
 		contentData, _, err := spec.Spec{}.ReadData(enc.NewWireView(content))
@@ -506,7 +516,6 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 			if err := a.keychain.InsertCert(userCert.Join()); err != nil {
 				log.Warn(a, "Failed to store final cert locally", "err", err, "name", userCertData.Name())
 			}
-
 			// Keep track of user certs issued by this owner
 			if err := client.Store().Put(userCertData.Name(), userCert.Join()); err != nil {
 				log.Warn(a, "Failed to store final cert in local store", "err", err, "name", userCertData.Name())
@@ -530,6 +539,7 @@ func (a *App) ownerSub(client ndn.Client, wkspName enc.Name, rootSigner ndn.Sign
 				a.PersistBootState(state)
 				log.Info(a, "Published final cert", "name", "name", userCertData.Name())
 			}
+
 		}
 		// Case 3: Repo blob fetch command
 	})
