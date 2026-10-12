@@ -112,3 +112,15 @@
 #repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sync-cfg" <= #testbed_user_cert
 #repo_cmd: #owner/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_owner_cert
 #repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_user_cert
+
+// Network-operated Merkle history log. The service prefix and permitted
+// signer certificate class are part of the common LVS, not application code.
+// Infrastructure certificates use NA, distinct from the generic NDNCERT user
+// rules that would otherwise also match these site and service identities.
+#merkle_cert: "KEY"/_/"NA"/_
+#merkle_cert: "KEY"/_/"NA"
+#merkle_log_site_cert: "ndn"/"edu"/"ucla"/#merkle_cert <= #testbed_root_cert
+#merkle_log_operator: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/#merkle_cert <= #merkle_log_site_cert
+#merkle_check: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=check"/_ <= #merkle_log_operator
+#merkle_append_request: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=append"/#user/_ <= #testbed_user_cert
+#merkle_append_response: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=append"/_ <= #merkle_log_operator

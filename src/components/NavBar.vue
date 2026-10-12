@@ -60,7 +60,7 @@
             </ul>
           </li>
           <li>
-            <a href="https://github.com/pulsejet/ownly" target="_blank">
+            <a href="https://github.com/UCLA-IRL/ownly" target="_blank">
               <FontAwesomeIcon class="mr-1" :icon="faGithub" size="sm" />
               GitHub
             </a>

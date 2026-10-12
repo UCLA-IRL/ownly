@@ -155,7 +155,6 @@ async function join() {
       label,
       name,
       false,
-      false,
       pskBuf,
       null,
     );

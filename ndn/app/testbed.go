@@ -110,6 +110,7 @@ func (a *App) ConnectTestbed() error {
 	face := face.NewWasmWsFace(endpoint, false)
 	face.OnUp(func() {
 		_ndnd_conn_change_js.Invoke(true, endpoint)
+		go a.resumeHistorySenders()
 	})
 	face.OnDown(func() {
 		_ndnd_conn_change_js.Invoke(false, endpoint)
@@ -169,7 +170,7 @@ func (a *App) verifyTestbedCert(certWire enc.Wire, fetch bool) (ndn.Data, error)
 		Data:              certData,
 		DataSigCov:        certSigCov,
 		UseDataNameFwHint: optional.Some(false), // directly available
-		UseSignatureTime:  optional.Some(true),
+		RawData:           certWire,
 		Fetch: func(name enc.Name, cfg *ndn.InterestConfig, callback ndn.ExpressCallbackFunc) {
 			if !fetch {
 				cfg.Lifetime.Set(1 * time.Millisecond) // no block

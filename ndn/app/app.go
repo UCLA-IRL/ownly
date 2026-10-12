@@ -6,9 +6,11 @@ import (
 	"crypto/cipher"
 	"fmt"
 	"runtime"
+	"sync"
 	"syscall/js"
 	"time"
 
+	"github.com/UCLA-IRL/ownly/ndn/historylog"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
@@ -29,6 +31,13 @@ type App struct {
 	engine   ndn.Engine
 	store    ndn.Store
 	keychain ndn.KeyChain
+
+	// The browser's durable capture and sender are bound to this configuration.
+	// Empty leaves capture disabled for the consumer-only Node app.
+	historyLogID   string
+	historyOutbox  historylog.Outbox
+	historyMu      sync.Mutex
+	historySenders map[string]*historySender
 
 	// Trust config for testbed certs only
 	// In practice all trust configs are currently the same, but
@@ -83,12 +92,18 @@ func NewApp() *App {
 	}
 
 	a := &App{
-		store:        store,
-		keychain:     kc,
-		dskReqs:      make(map[string]*time.Timer),
-		bootSyncs:    make(map[string]bool),
-		joinPayloads: make(map[string][]byte),
+		store:          store,
+		keychain:       kc,
+		historyLogID:   historyLogScopeID,
+		historySenders: make(map[string]*historySender),
+		dskReqs:        make(map[string]*time.Timer),
+		bootSyncs:      make(map[string]bool),
+		joinPayloads:   make(map[string][]byte),
 	}
+	a.historyOutbox = historylog.NewJSOutbox(_ndnd_store_js, func(scope historylog.Scope) {
+		store.ClearCache()
+		a.wakeHistorySender(scope)
+	})
 	a.initialize()
 	return a
 }
@@ -132,6 +147,38 @@ func (a *App) initialize() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// historyCapture binds an operation to its original identity and configured log.
+// The browser enables capture through its IndexedDB-backed outbox. A headless
+// producer has no durable outbox and therefore leaves capture disabled.
+func (a *App) historyCapture(identity enc.Name) (*historylog.Capture, error) {
+	if a.historyLogID == "" {
+		return nil, nil
+	}
+	scope, err := historylog.NewScope(identity, a.historyLogID)
+	if err != nil {
+		return nil, err
+	}
+	if err = a.ensureHistorySender(identity, scope); err != nil {
+		log.Warn(a, "History sender is not ready; durable capture will recover later", "err", err)
+	}
+	return historylog.NewCapture(a.historyOutbox, scope)
+}
+
+func (a *App) persistIdentityHistory(signer ndn.Signer, wires ...enc.Wire) error {
+	if a.historyLogID == "" {
+		return nil
+	}
+	identity, err := security.GetIdentityFromKeyName(signer.KeyName())
+	if err != nil {
+		return err
+	}
+	capture, err := a.historyCapture(identity)
+	if err != nil {
+		return err
+	}
+	return capture.PersistProducedData(wires...)
 }
 
 func (a *App) String() string {
@@ -234,9 +281,10 @@ func (a *App) JsApi() js.Value {
 			return a.IsWorkspaceOwner(p[0].String())
 		}),
 
-		// get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
+		// get_workspace(name: string, allowMissingHistory?: boolean): Promise<WorkspaceAPI>;
 		"get_workspace": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			return a.GetWorkspace(p[0].String(), p[1].Bool())
+			allowMissingHistory := len(p) > 1 && p[1].Truthy()
+			return a.GetWorkspace(p[0].String(), allowMissingHistory)
 		}),
 
 		// wait_user_key(wksp: string): Promise<void>;

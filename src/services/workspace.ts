@@ -84,10 +84,7 @@ export class Workspace {
     let invite: WorkspaceInviteManager | null = null;
     try {
 
-      api = await ndn.api.get_workspace(
-        metadata.name,
-        metadata.ignore,
-      );
+      api = await ndn.api.get_workspace(metadata.name, metadata.ignore ?? false);
       await api.start();
 
       const owner = await ndn.api.is_workspace_owner(metadata.name);
@@ -590,14 +587,20 @@ export class Workspace {
     _o.stats.put(space, metadata); // background
 
     // Start workspace if not already active
-    if (globalThis.ActiveWorkspace?.metadata.name === metadata.name) {
+    if (
+      globalThis.ActiveWorkspace?.metadata.name === metadata.name &&
+      (globalThis.ActiveWorkspace.metadata.ignore ?? false) === (metadata.ignore ?? false)
+    ) {
       return globalThis.ActiveWorkspace;
     }
 
     const pendingSetup = globalThis.ActiveWorkspaceSetup;
     if (pendingSetup) {
       const pendingWorkspace = await pendingSetup.promise.catch(() => null);
-      if (pendingWorkspace?.metadata.name === metadata.name) {
+      if (
+        pendingWorkspace?.metadata.name === metadata.name &&
+        (pendingWorkspace.metadata.ignore ?? false) === (metadata.ignore ?? false)
+      ) {
         return pendingWorkspace;
       }
     }
@@ -670,7 +673,6 @@ export class Workspace {
    * @param label Display name
    * @param wksp Workspace name
    * @param create Create the workspace if it does not exist
-   * @param ignore Ignore validity checks while consuming workspace data
    * @param psk Pre-shared key for encryption
    * @param payload App-defined payload passed to boot sync; pass null when unused
    */
@@ -678,7 +680,6 @@ export class Workspace {
     label: string,
     wksp: string,
     create: boolean,
-    ignore: boolean,
     psk: Uint8Array | null,
     payload: Uint8Array | null,
   ): Promise<string> {
@@ -714,7 +715,6 @@ export class Workspace {
       label: label,
       name: finalName,
       owner: isOwner,
-      ignore: ignore,
       pendingSetup: create ? true : undefined,
       revoked: undefined,
       deviceId: globalThis.crypto.randomUUID(),

@@ -98,8 +98,8 @@ interface NDNAPI {
     ) => Promise<void>,
   ): Promise<void>;
 
-  /** Get a Workspace API */
-  get_workspace(name: string, ignore: boolean): Promise<WorkspaceAPI>;
+  /** Get a Workspace API; Magic permits expired retained data only if absent from the log. */
+  get_workspace(name: string, allowMissingHistory?: boolean): Promise<WorkspaceAPI>;
 }
 
 export type IdentityKeyInfo = {

@@ -11,8 +11,8 @@ export type IWkspStats = {
   name: string;
   /** Is the current user the owner */
   owner: boolean;
-  /** Workspace ignore certificate lifetime */
-  ignore: boolean;
+  /** Allow expired retained data only when the history log reports it missing */
+  ignore?: boolean;
   /** Workspace is pending initial setup */
   pendingSetup?: boolean;
   /** Local access was revoked; require a fresh invitation to rejoin */

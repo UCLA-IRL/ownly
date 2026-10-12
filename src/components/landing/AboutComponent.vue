@@ -50,7 +50,7 @@
           <a href="https://named-data.net" target="_blank">Named Data Networking</a> standards, a
           new data-centric architecture for the Internet. We build on 15+ years of research and
           development at various universities. All components of Ownly are open source and are
-          available on <a href="https://github.com/pulsejet/ownly" target="_blank">GitHub</a>.
+          available on <a href="https://github.com/UCLA-IRL/ownly" target="_blank">GitHub</a>.
         </div>
         <div class="image">
           <img alt="screenshot" class="screenshot" src="@/assets/about/ndn.png" />
