@@ -37,6 +37,8 @@ interface NDNAPI {
     local: IdentityKeyInfo[];
     peers: IdentityKeyInfo[];
   }>;
+  /** List wkspKey certificates for a member in the active workspace. */
+  list_workspace_certs(identity: string): Promise<string[]>;
   /** Generate a new managed identity key pair */
   generate_identity_key(): Promise<IdentityKeyInfo>;
   /** Import an existing identity key pair (MarshalSecret format) */
@@ -59,6 +61,29 @@ interface NDNAPI {
   export_identity_cert(): Promise<Uint8Array>;
   /** Export a managed identity certificate by name */
   export_identity_cert_by_name(certName: string): Promise<Uint8Array>;
+
+  /**
+   * Revoke a wkspKey cert. Publishes a Revocation record to the boot
+   * SVS group of the active workspace. Returns the canonical record
+   * name. Master-only. The cert name must be a wkspKey variant
+   * (path contains /wksp/ and /KEY/) or the call fails.
+   */
+  revoke_cert(certName: string, reason: number, invalidityTime: number): Promise<string>;
+  /**
+   * List revocations for known wkspKey certificates from durable keychain state.
+   */
+  list_revocations(): Promise<Array<{
+    cert_name: string;
+    reason: number;
+    invalidity_time: number;
+    cert_hash: string;
+  }>>;
+  /** Register a callback for cert-revoked events. */
+  on_cert_revoked(cb: (certName: string, record: {
+    reason: number;
+    invalidity_time: number;
+    cert_hash: string;
+  }) => void): Promise<void>;
 
   /** Connect to the global NDN testbed */
   connect_testbed(): Promise<void>;
@@ -206,6 +231,11 @@ export interface SvsAloApi {
   pub_mls_commit_ref(invitee: string, blobName: string, sessionId: string): Promise<string>;
   /** Retry encrypted publications that were waiting for an MLS session key */
   retry_pending_decrypts?(): Promise<void>;
+
+  /**
+   * Publish a Revocation record. Master-only.
+   */
+  pub_revocation(certName: string, reason: number, invalidityTime: number): Promise<string>;
 
   /** Set SVS ALO subscription callbacks */
   subscribe(params: {
@@ -380,6 +410,27 @@ class NDNService {
         );
       } catch (err) {
         console.error('Failed to register boot join payload callback', err);
+      }
+    }
+
+    if (typeof this.api.on_cert_revoked === 'function') {
+      try {
+        await this.api.on_cert_revoked(
+          (certName: string, record: {
+            reason: number;
+            invalidity_time: number;
+            cert_hash: string;
+          }) => {
+            GlobalBus.emit('cert-revoked', {
+              reason: record.reason,
+              invalidity_time: record.invalidity_time,
+              cert_hash: record.cert_hash,
+              cert_name: certName,
+            });
+          },
+        );
+      } catch (err) {
+        console.error('Failed to register cert-revoked callback', err);
       }
     }
   }

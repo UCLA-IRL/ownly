@@ -927,7 +927,7 @@ func (a *App) GetWorkspace(groupStr string, ignoreValidity bool) (api js.Value, 
 			}
 
 			// Create JS API for SVS ALO
-			return a.SvsAloJs(client, svsAlo, p[2])
+			return a.SvsAloJs(client, svsAlo, svsAloGroup.Prefix(-1), p[2])
 		}),
 
 		// sign_and_pub_invitation(invitee: string): Promise<Uint8Array>;
@@ -1271,6 +1271,7 @@ func (a *App) setupOwner(wkspName enc.Name, identitySigner ndn.Signer) (ndn.Sign
 func (a *App) SvsAloJs(
 	client ndn.Client,
 	alo *ndn_sync.SvsALO,
+	wkspName enc.Name,
 	persistState js.Value,
 ) (api js.Value, err error) {
 	// List of SVS routes to announce
@@ -1456,6 +1457,34 @@ func (a *App) SvsAloJs(
 
 			jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
 			return js.ValueOf(name.String()), nil
+		}),
+
+		// pub_revocation(certName, reason, invalidityTime): Promise<string>;
+		"pub_revocation": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
+			certName, err := enc.NameFromStr(p[0].String())
+			if err != nil {
+				return nil, fmt.Errorf("invalid cert name: %w", err)
+			}
+			revoker, err := a.workspaceOwnerSigner(wkspName)
+			if err != nil {
+				return nil, err
+			}
+			certBytes, err := a.resolveCertWire(certName)
+			if err != nil {
+				return nil, err
+			}
+			recName, state, err := publishRevocationToAlo(
+				alo, certName, certBytes, revoker,
+				uint8(p[1].Int()), uint64(p[2].Int()),
+			)
+			if err != nil {
+				return nil, err
+			}
+			if state != nil {
+				jsutil.Await(persistState.Invoke(jsutil.SliceToJsArray(state.Join())))
+			}
+			a.reshootSecurityConfig()
+			return js.ValueOf(recName), nil
 		}),
 
 		// pub_blob_fetch(name: string, encapsulate: Uint8Array | undefined): Promise<string>;
@@ -1710,6 +1739,12 @@ func (a *App) SvsAloJs(
 				refreshPongs := js.Global().Get("Array").New()
 
 				for _, pub := range pubs {
+					// ndnd checks the durable revocation record when it validates
+					// the publication's signer certificate.
+					if a.handleRevocationPub(client, wkspName, pub) {
+						continue
+					}
+
 					pmsg, err := tlv.ParseMessage(enc.NewWireView(pub.Content), true)
 					if err != nil {
 						log.Error(nil, "Failed to parse publication", "err", err)

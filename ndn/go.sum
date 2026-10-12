@@ -1,3 +1,5 @@
+github.com/Harsh23Kashyap/ndnd v0.0.0-20260921145730-9a13ec829306 h1:eTkOAkIKPRz4qhhzjt1Ac1zW8P70cvT2BBxRPpsfQXA=
+github.com/Harsh23Kashyap/ndnd v0.0.0-20260921145730-9a13ec829306/go.mod h1:CbbyY2TV3oWOL1HH7JDok2k6klTdHvGPMBZAWx7CZqE=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/cespare/xxhash v1.1.0 h1:a6HrQnmkObjyL+Gs60czilIUGqrzKutQD6XZog3p+ko=
@@ -29,8 +31,6 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/klauspost/compress v1.18.4 h1:RPhnKRAQ4Fh8zU2FY/6ZFDwTVTxgJ/EMydqSTzE9a2c=
 github.com/klauspost/compress v1.18.4/go.mod h1:R0h/fSBs8DE4ENlcrlib3PsXS61voFxhIs2DeRhCvJ4=
-github.com/named-data/ndnd v1.5.4-0.20260708182552-362a01097784 h1:90ljXn+aYDNhNSYLz4lK4WdVOrhbpok8yYz+UVohq6w=
-github.com/named-data/ndnd v1.5.4-0.20260708182552-362a01097784/go.mod h1:CbbyY2TV3oWOL1HH7JDok2k6klTdHvGPMBZAWx7CZqE=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72 h1:qLC7fQah7D6K1B0ujays3HV9gkFtllcxhzImRR7ArPQ=

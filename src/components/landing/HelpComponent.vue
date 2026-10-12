@@ -106,7 +106,7 @@ import StepItem from './StepItem.vue';
 import { GlobalBus } from '@/services/event-bus';
 
 const tocIds = ['creating-workspace', 'joining-workspace', 'inviting-others'];
-let isScrolling = false;
+const isScrolling = false;
 
 function handleScroll() {
   if (isScrolling) return;
