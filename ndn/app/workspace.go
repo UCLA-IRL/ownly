@@ -241,7 +241,7 @@ func (a *App) onAccessRequest(args ndn.InterestHandlerArgs) {
 }
 
 // GetWorkspace returns a JS object representing the workspace with the given name.
-func (a *App) GetWorkspace(groupStr string) (api js.Value, err error) {
+func (a *App) GetWorkspace(groupStr string, allowMissingHistory bool) (api js.Value, err error) {
 	if err = a.promoteIdentityAnchors(); err != nil {
 		return
 	}
@@ -269,7 +269,7 @@ func (a *App) GetWorkspace(groupStr string) (api js.Value, err error) {
 	if err != nil {
 		return api, err
 	}
-	client, err := a.historyReader(object.NewClient(a.engine, a.store, a.trust), idName)
+	client, err := a.historyReader(object.NewClient(a.engine, a.store, a.trust), idName, allowMissingHistory)
 	if err != nil {
 		return api, err
 	}

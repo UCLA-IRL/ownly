@@ -232,9 +232,10 @@ supply a durable `Outbox` and startup recovery before enabling capture.
 
 ## 5. Consumer behavior
 
-The historical reader applies NDNd's expiry callback only when consuming retained
-workspace objects, including publications, snapshots, HIDX metadata, and boot
-envelopes. Direct validation, live SVS, commands, and enrollment remain strict.
+The historical reader applies NDNd's Merkle expiry callback only when consuming
+retained workspace objects, including publications, snapshots, HIDX metadata,
+and boot envelopes. Direct validation, live SVS, commands, and enrollment remain
+strict.
 
 When an authorizing certificate is expired, the consumer MUST:
 
@@ -246,7 +247,9 @@ When an authorizing certificate is expired, the consumer MUST:
 Every consumed segment MUST validate. Required certificate dependencies MUST
 also satisfy their own validation relations; logging only the application packet
 is insufficient when an intermediate authorization packet needs evidence.
-Missing, malformed, untrusted, or late evidence MUST reject the affected packet.
+Missing evidence MUST reject the affected packet unless the log authenticates
+its absence and the explicit fallback in §5.2 is enabled. Malformed, untrusted,
+or late evidence MUST reject the packet in either mode.
 Rejected content MUST NOT reach Yjs or application state; failure uses the normal
 consumption error path.
 
@@ -280,9 +283,49 @@ recursively depend on another proof.
 
 NDNd owns response authentication, append result count/order/hash matching,
 inclusion proof validation, and ingestion-time policy. Ownly's sender relies on
-these SDK guarantees when mapping results to rows. The reader returns failures
-through ordinary object-consumption errors; it does not fall back to accepting
-unchecked content when the log is unavailable.
+these SDK guarantees when mapping results to rows. The reader returns
+failures through ordinary object-consumption errors; log failure MUST NOT
+automatically enable the compatibility mode below.
+
+### 5.2 Temporary missing-record fallback
+
+The workspace card exposes a manual Magic toggle for compatibility with retained
+data absent from the history log. Its saved preference is the optional
+workspace metadata field `ignore`; absence means false. Existing saved choices
+remain applicable. The card MUST merge the selected value into the current saved
+metadata before launching the workspace. Changes take effect on its next launch;
+an active or pending workspace client MUST be recreated if its effective
+preference differs from the saved value.
+
+`get_workspace(name, allowMissingHistory?)` carries this preference into workspace
+client construction. Certificate validity remains enforced unless an expired
+authorization relation triggers a history check. The strict log client MUST
+check the exact received Data wire hash before the fallback can apply:
+
+| Authenticated log result | Magic OFF | Magic ON |
+| --- | --- | --- |
+| Included | Require normal proof and ingestion-time validation | Same |
+| NotFound | Reject | Waive the expired-certificate check |
+| Request, authentication, or protocol error | Reject | Reject |
+
+On NotFound with Magic enabled, the reader uses NDNd's `IgnoreExpiredCert`
+callback for that relation, then ordinary validation continues. The choice
+applies to retained publications, snapshots, metadata, and boot objects, and
+to each required certificate dependency independently. It MUST NOT waive late
+ingestion or accept an unverified absence response. Included packets delegate
+to NDNd's normal history policy, which performs a second check; this keeps proof
+and ingestion-time handling in the SDK without matching error strings.
+
+The mode MUST preserve signature verification, trust-schema authorization, and
+established trust-anchor requirements. It MUST NOT alter direct validation,
+live SVS, log request/response validity, command signing, or enrollment. Producer
+capture and history uploads remain enabled. A log error alone MUST NOT switch
+the mode on.
+
+The fallback is a client consumption policy, not a schema exception or global
+trust setting. Its eventual removal consists of deleting the UI preference/API
+parameter and the reader's compatibility branch; durable packet and outbox
+formats do not depend on this preference.
 
 ## 6. Deployment and limits
 

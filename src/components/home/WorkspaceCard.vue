@@ -26,6 +26,13 @@
       </div>
 
       <div class="content">
+        <div class="field mb-3">
+          <label class="checkbox is-size-7">
+            <input v-model="allowMissingHistory" type="checkbox" />
+            {{ allowMissingHistory ? 'Magic ON' : 'Magic OFF' }}
+          </label>
+          <p class="help">Allow expired history only when the log has no record.</p>
+        </div>
         <div class="has-text-right">
           <button class="button is-primary mr-2 is-small-caps soft-if-dark" @click="launch">
             Launch Workspace
@@ -67,11 +74,18 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['open', 'leave']);
+const allowMissingHistory = ref(props.metadata.ignore ?? false);
 
 const avatar = ref<string>(utils.makeAvatar(props.metadata.name ?? 'wksp', 'shapes'));
 const wkspMenu = useTemplateRef('wkspMenu');
 
-function launch() {
+async function launch() {
+  const metadata = await _o.stats.get(props.metadata.name);
+  if (!metadata) return;
+  await _o.stats.put(props.metadata.name, {
+    ...metadata,
+    ignore: allowMissingHistory.value,
+  });
   emit('open');
 
   // Take this chance to request persistent storage

@@ -281,9 +281,10 @@ func (a *App) JsApi() js.Value {
 			return a.IsWorkspaceOwner(p[0].String())
 		}),
 
-		// get_workspace(name: string): Promise<WorkspaceAPI>;
+		// get_workspace(name: string, allowMissingHistory?: boolean): Promise<WorkspaceAPI>;
 		"get_workspace": jsutil.AsyncFunc(func(this js.Value, p []js.Value) (any, error) {
-			return a.GetWorkspace(p[0].String())
+			allowMissingHistory := len(p) > 1 && p[1].Truthy()
+			return a.GetWorkspace(p[0].String(), allowMissingHistory)
 		}),
 
 		// wait_user_key(wksp: string): Promise<void>;

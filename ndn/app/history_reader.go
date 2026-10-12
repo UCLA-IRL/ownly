@@ -3,10 +3,15 @@
 package app
 
 import (
+	"crypto/sha256"
+	"fmt"
+
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/merklelog"
 	"github.com/named-data/ndnd/std/ndn"
+	merkledef "github.com/named-data/ndnd/std/ndn/merklelog"
 	"github.com/named-data/ndnd/std/object"
+	"github.com/named-data/ndnd/std/security"
 )
 
 // The endpoint is routing configuration. Response authorization and append
@@ -18,7 +23,7 @@ var historyLogName, _ = enc.NameFromStr("/ndn/edu/ucla/ndnd/merkle")
 const historyLogScopeID = "ucla-ndnd-merkle/site-issued-v1"
 
 // historyReader returns a client for retained workspace Data.
-func (a *App) historyReader(client ndn.Client, requester enc.Name) (ndn.Client, error) {
+func (a *App) historyReader(client ndn.Client, requester enc.Name, allowMissingHistory bool) (ndn.Client, error) {
 	if len(historyLogName) == 0 {
 		return client, nil
 	}
@@ -27,7 +32,35 @@ func (a *App) historyReader(client ndn.Client, requester enc.Name) (ndn.Client, 
 	if err != nil {
 		return nil, err
 	}
-	return withHistoryExpiry(client, merklelog.NewCertExpiredPolicy(proofClient)), nil
+	policy := merklelog.NewCertExpiredPolicy(proofClient)
+	if allowMissingHistory {
+		policy = allowMissingHistoryPolicy(proofClient, policy)
+	}
+	return withHistoryExpiry(client, policy), nil
+}
+
+// Magic only waives expiry after an authenticated NotFound response.
+// Included packets still use the SDK's ingestion-time policy.
+func allowMissingHistoryPolicy(proofClient *merklelog.Client, historyPolicy ndn.CertExpiredCallback) ndn.CertExpiredCallback {
+	return func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+		if args.Data == nil || args.RawData.Length() == 0 {
+			historyPolicy(args, complete)
+			return
+		}
+		hash := sha256.Sum256(args.RawData.Join())
+		proofClient.Check(hash[:], func(response *merkledef.CheckResponse, err error) {
+			if err != nil {
+				complete(fmt.Errorf("Merkle log check failed: %w", err))
+				return
+			}
+			if response.Result.Status == merkledef.CheckStatusNotFound {
+				security.IgnoreExpiredCert(args, complete)
+				return
+			}
+			// A second check keeps proof and ingestion-time handling in the SDK.
+			historyPolicy(args, complete)
+		})
+	}
 }
 
 // historyLogClient constructs a client whose requests and responses use ordinary

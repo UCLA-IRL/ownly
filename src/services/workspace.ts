@@ -84,7 +84,7 @@ export class Workspace {
     let invite: WorkspaceInviteManager | null = null;
     try {
 
-      api = await ndn.api.get_workspace(metadata.name);
+      api = await ndn.api.get_workspace(metadata.name, metadata.ignore ?? false);
       await api.start();
 
       const owner = await ndn.api.is_workspace_owner(metadata.name);
@@ -587,14 +587,20 @@ export class Workspace {
     _o.stats.put(space, metadata); // background
 
     // Start workspace if not already active
-    if (globalThis.ActiveWorkspace?.metadata.name === metadata.name) {
+    if (
+      globalThis.ActiveWorkspace?.metadata.name === metadata.name &&
+      (globalThis.ActiveWorkspace.metadata.ignore ?? false) === (metadata.ignore ?? false)
+    ) {
       return globalThis.ActiveWorkspace;
     }
 
     const pendingSetup = globalThis.ActiveWorkspaceSetup;
     if (pendingSetup) {
       const pendingWorkspace = await pendingSetup.promise.catch(() => null);
-      if (pendingWorkspace?.metadata.name === metadata.name) {
+      if (
+        pendingWorkspace?.metadata.name === metadata.name &&
+        (pendingWorkspace.metadata.ignore ?? false) === (metadata.ignore ?? false)
+      ) {
         return pendingWorkspace;
       }
     }
