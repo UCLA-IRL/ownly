@@ -3,7 +3,7 @@ module github.com/UCLA-IRL/ownly/ndn
 go 1.25.0
 
 require (
-	github.com/named-data/ndnd v1.5.4-0.20260919160701-e3c4e9c2f1e0
+	github.com/named-data/ndnd v1.5.4-0.20261012162200-69b32b042a82
 	golang.org/x/crypto v0.48.0
 )
 
