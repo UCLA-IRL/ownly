@@ -18,7 +18,6 @@ import (
 	"github.com/named-data/ndnd/std/security/keychain"
 	"github.com/named-data/ndnd/std/security/trust_schema"
 	jsutil "github.com/named-data/ndnd/std/utils/js"
-	"github.com/pulsejet/ownly/ndn/app/tlv"
 )
 
 // logOnce guards the one-time legacy-cert warning emitted from
@@ -288,19 +287,9 @@ func (a *App) JsApi() js.Value {
 				return nil, fmt.Errorf("invalid member identity: %w", err)
 			}
 			wkspName := a.bootSyncSession.group.Prefix(-1)
-			target := wkspName.Append(identity...)
 			out := js.Global().Get("Array").New()
-			for _, kcIdentity := range a.keychain.Identities() {
-				if !kcIdentity.Name().Equal(target) {
-					continue
-				}
-				for _, key := range kcIdentity.Keys() {
-					for _, certName := range key.UniqueCerts() {
-						if tlv.IsWkspKeyCertName(certName) {
-							out.Call("push", certName.String())
-						}
-					}
-				}
+			for _, certName := range a.issuedWorkspaceCertNames(wkspName, identity) {
+				out.Call("push", certName.String())
 			}
 			return out, nil
 		}),
