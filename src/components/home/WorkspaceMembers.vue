@@ -66,7 +66,6 @@
           <label class="label is-small">wkspKey name</label>
           <div class="control">
             <input
-              ref="certNameInput"
               v-model="certNameInput"
               class="input"
               type="text"
