@@ -297,6 +297,11 @@ metadata before launching the workspace. Changes take effect on its next launch;
 an active or pending workspace client MUST be recreated if its effective
 preference differs from the saved value.
 
+Stopping a workspace MUST clear its matching boot-sync session and owner or
+participant restart guard. Relaunch MUST construct boot sync with the new
+workspace client so boot objects follow the selected history policy. A stale
+workspace handle MUST NOT stop another workspace's boot-sync session.
+
 `get_workspace(name, allowMissingHistory?)` carries this preference into workspace
 client construction. Certificate validity remains enforced unless an expired
 authorization relation triggers a history check. The strict log client MUST
@@ -336,6 +341,12 @@ Ownly addresses the log by its NDN prefix through the connected router.
 `wss://suns.cs.ucla.edu/ws/` is the default WebSocket router endpoint;
 router discovery may select another face. The server accepts at most 100 hashes
 per append; Ownly's 64-hash batches fit that count limit.
+
+Repository replication currently targets `/ndnd/ucla/repo3`. History verification
+MUST remain compatible with this endpoint and its existing command namespaces.
+Migration to the newer repository is a separate change; its routing, command
+names, and common LVS authorization MUST be aligned together. Changing the
+repository alone MUST NOT retarget history-log outbox scopes.
 
 Consumers trust the log operator's clock and statements about ingestion time.
 Inclusion proofs do not independently establish wall-clock time or prevent

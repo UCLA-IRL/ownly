@@ -551,7 +551,8 @@ func (a *App) GetWorkspace(groupStr string, allowMissingHistory bool) (api js.Va
 			if err := client.Stop(); err != nil {
 				return nil, err
 			}
-			if a.bootSyncSession != nil && a.bootSyncSession.alo != nil {
+			bootGroup := wkspName.Append(enc.NewKeywordComponent("boot"))
+			if a.bootSyncSession != nil && a.bootSyncSession.group.Equal(bootGroup) && a.bootSyncSession.alo != nil {
 				_ = a.bootSyncSession.alo.Stop()
 				routes := []enc.Name{
 					a.bootSyncSession.alo.SyncPrefix(),
@@ -560,6 +561,9 @@ func (a *App) GetWorkspace(groupStr string, allowMissingHistory bool) (api js.Va
 				for _, route := range routes {
 					client.WithdrawPrefix(route, nil)
 				}
+				delete(a.bootSyncs, "boot-owner:"+bootGroup.String())
+				delete(a.bootSyncs, "boot-pub:"+bootGroup.String())
+				a.bootSyncSession = nil
 			}
 			jsutil.ReleaseMap(workspaceJs)
 			return nil, nil
