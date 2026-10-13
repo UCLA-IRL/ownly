@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	enc "github.com/named-data/ndnd/std/encoding"
+	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/merklelog"
 	"github.com/named-data/ndnd/std/ndn"
 	merkledef "github.com/named-data/ndnd/std/ndn/merklelog"
@@ -95,5 +96,12 @@ func (c *historyExpiryClient) Consume(name enc.Name, callback func(ndn.ConsumeSt
 
 func (c *historyExpiryClient) ConsumeExt(args ndn.ConsumeExtArgs) {
 	args.OnCertExpired = c.onCertExpired
+	onComplete := args.Callback
+	args.Callback = func(status ndn.ConsumeState) {
+		if err := status.Error(); err != nil {
+			log.Warn(nil, "History object fetch failed", "name", status.Name(), "err", err)
+		}
+		onComplete(status)
+	}
 	c.Client.ConsumeExt(args)
 }
