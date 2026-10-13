@@ -14,7 +14,7 @@ import (
 	"github.com/named-data/ndnd/std/object"
 )
 
-func (a *App) publishSecurityConfig(client ndn.Client, group enc.Name) (*spec.NameContainer, error) {
+func (a *App) publishSecurityConfig(client ndn.Client, testbedSigner ndn.Signer) (*spec.NameContainer, error) {
 	anchors := a.GatherAnchors()
 	if len(anchors) == 0 {
 		return nil, fmt.Errorf("no identity or peer anchors available")
@@ -25,12 +25,8 @@ func (a *App) publishSecurityConfig(client ndn.Client, group enc.Name) (*spec.Na
 		Anchors: anchors,
 	}
 
-	testbedSigner, _ := a.GetTestbedKey()
-	name := testbedSigner.KeyName().
-		Append(enc.NewKeywordComponent("repo-cmd")).
-		Append(enc.NewKeywordComponent("syncjoin")).
-		Append(group...).
-		Append(enc.NewKeywordComponent("sec-cfg")).
+	name := testbedSigner.KeyName().Prefix(-2).
+		Append(enc.NewKeywordComponent("repo-security")).
 		Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
 
 	_, err := object.Produce(ndn.ProduceArgs{
@@ -50,9 +46,15 @@ func (a *App) NotifyRepoJoin(client ndn.Client, group enc.Name, dataPrefix enc.N
 	// Wait for 1s so that routes get registered
 	time.Sleep(time.Second)
 
-	secCfg, err := a.publishSecurityConfig(client, group)
+	testbedSigner, _ := a.GetTestbedKey()
+	if testbedSigner == nil {
+		log.Warn(a, "Cannot join repo without a valid testbed key", "group", group)
+		return
+	}
+	secCfg, err := a.publishSecurityConfig(client, testbedSigner)
 	if err != nil {
 		log.Warn(a, "Failed to publish security config", "group", group, "err", err)
+		return
 	}
 
 	syncJoin := &spec_repo.SyncJoin{
@@ -67,25 +69,26 @@ func (a *App) NotifyRepoJoin(client ndn.Client, group enc.Name, dataPrefix enc.N
 		}
 	}
 
-	testbedSigner, _ := a.GetTestbedKey()
 	repoCmd := spec_repo.RepoCmd{SyncJoin: syncJoin}
-	name := testbedSigner.KeyName().
-		Append(enc.NewKeywordComponent("repo-cmd")).
-		Append(enc.NewKeywordComponent("syncjoin")).
-		Append(group...).
-		Append(enc.NewKeywordComponent("sync-cfg")).
+	name := testbedSigner.KeyName().Prefix(-2).
+		Append(enc.NewKeywordComponent("repo")).
 		Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
 
 	client.ExpressCommand(
-		repoName,
+		repoName.Append(enc.NewKeywordComponent("cmd")),
 		name,
 		repoCmd.Encode(),
 		func(w enc.Wire, err error) {
 			if err != nil {
 				log.Warn(nil, "Repo sync join command failed", "group", group, "err", err)
-			} else {
-				log.Info(nil, "Repo joined SVS group", "group", group)
+				return
 			}
+			response, err := spec_repo.ParseRepoCmdRes(enc.NewWireView(w), false)
+			if err != nil || response.Status != 200 {
+				log.Warn(a, "Repo sync join rejected", "group", group, "response", response, "err", err)
+				return
+			}
+			log.Info(a, "Repo joined SVS group", "group", group)
 		})
 }
 

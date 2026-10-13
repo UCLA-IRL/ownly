@@ -40,7 +40,7 @@ const (
 )
 
 // TODO: change this
-var repoName, _ = enc.NameFromStr("/ndnd/ucla/repo3")
+var repoName, _ = enc.NameFromStr("/ndn/edu/ucla/ndnd/repo")
 
 // TODO: this is testbed configuration
 var multicastPrefix, _ = enc.NameFromStr("/ndn/multicast")
@@ -1031,6 +1031,12 @@ func (a *App) announceKeyPrefix(args announceKeyPrefixArgs) {
 	}
 
 	routes := []enc.Name{args.Testbed.KeyName(), args.User.KeyName()}
+	// The repo uses command/config names as certificate forwarding hints.
+	identity := args.Testbed.KeyName().Prefix(-2)
+	routes = append(routes,
+		identity.Append(enc.NewKeywordComponent("repo")),
+		identity.Append(enc.NewKeywordComponent("repo-security")),
+	)
 	if args.IsOwner {
 		accessRequestPrefix := args.Workspace.
 			Append(enc.NewKeywordComponent("boot")).

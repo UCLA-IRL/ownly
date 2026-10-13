@@ -30,13 +30,21 @@
 #owner: "ndn"/owner50/owner51/owner52/owner53/owner54
 #owner: "ndn"/owner60/owner61/owner62/owner63/owner64/owner65
 
-// Name of user
-#user: "ndn"/user10
-#user: "ndn"/user20/user21
-#user: "ndn"/user30/user31/user32
-#user: "ndn"/user40/user41/user42/user43
-#user: "ndn"/user50/user51/user52/user53/user54
-#user: "ndn"/user60/user61/user62/user63/user64/user65
+// User identity patterns, shared by workspace and testbed policies.
+#user1: "ndn"/user10
+#user2: "ndn"/user20/user21
+#user3: "ndn"/user30/user31/user32
+#user4: "ndn"/user40/user41/user42/user43
+#user5: "ndn"/user50/user51/user52/user53/user54
+#user6: "ndn"/user60/user61/user62/user63/user64/user65
+
+// All supported user identity lengths.
+#user: #user1
+#user: #user2
+#user: #user3
+#user: #user4
+#user: #user5
+#user: #user6
 
 // Name of directed request requester
 #requester: "ndn"/requester10
@@ -51,6 +59,14 @@
 #testbed_root_cert: /"ndn"/#KEY
 #testbed_owner_cert: #owner/#TC <= #testbed_site_cert | #testbed_root_cert
 #testbed_user_cert: #user/#TC <= #testbed_site_cert | #testbed_root_cert
+
+// Length-specific aliases of the testbed-user certificate class.
+#testbed_user_cert1: #user1/#TC
+#testbed_user_cert2: #user2/#TC
+#testbed_user_cert3: #user3/#TC
+#testbed_user_cert4: #user4/#TC
+#testbed_user_cert5: #user5/#TC
+#testbed_user_cert6: #user6/#TC
 
 // Owner identity and fast-join ephemeral identity
 #ownerid_cert:    #owner/#IDCERT
@@ -107,20 +123,24 @@
 // DSK exchange
 #dsk: #owner/wksp/"root"/"32=DSK"/_ <= #owner_cert | #user_cert
 
-// Repo commands, everyone can issue sync join with security config
-#repo_cmd: #owner/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sync-cfg" <= #testbed_owner_cert
-#repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sync-cfg" <= #testbed_user_cert
-#repo_cmd: #owner/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_owner_cert
-#repo_cmd: #user/KEY/_/"32=repo-cmd"/"32=syncjoin"/#group/"32=sec-cfg" <= #testbed_user_cert
+// Repo management uses the existing testbed-user identity bindings.
+#repo_operation: operation & { operation: "32=repo" | "32=repo-security" }
+#repo_request: #user1/#repo_operation <= #testbed_user_cert1
+#repo_request: #user2/#repo_operation <= #testbed_user_cert2
+#repo_request: #user3/#repo_operation <= #testbed_user_cert3
+#repo_request: #user4/#repo_operation <= #testbed_user_cert4
+#repo_request: #user5/#repo_operation <= #testbed_user_cert5
+#repo_request: #user6/#repo_operation <= #testbed_user_cert6
 
-// Network-operated Merkle history log. The service prefix and permitted
-// signer certificate class are part of the common LVS, not application code.
-// Infrastructure certificates use NA, distinct from the generic NDNCERT user
-// rules that would otherwise also match these site and service identities.
+// Network services use UCLA site-issued NA certificates. Responses must
+// be signed by the service named in the packet.
 #merkle_cert: "KEY"/_/"NA"/_
 #merkle_cert: "KEY"/_/"NA"
 #merkle_log_site_cert: "ndn"/"edu"/"ucla"/#merkle_cert <= #testbed_root_cert
-#merkle_log_operator: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/#merkle_cert <= #merkle_log_site_cert
-#merkle_check: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=check"/_ <= #merkle_log_operator
+#testbed_service_cert: "ndn"/"edu"/"ucla"/"ndnd"/service/#merkle_cert
+    & { service: "merkle" | "repo" } <= #merkle_log_site_cert
+#testbed_service_response: "ndn"/"edu"/"ucla"/"ndnd"/service/operation/_
+    & { service: "merkle", operation: "32=check" | "32=append" }
+    | { service: "repo", operation: "32=cmd" }
+    <= #testbed_service_cert
 #merkle_append_request: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=append"/#user/_ <= #testbed_user_cert
-#merkle_append_response: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=append"/_ <= #merkle_log_operator

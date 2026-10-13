@@ -52,16 +52,22 @@ The root is already pinned in Ownly. The relevant LVS rules are:
 #merkle_cert: "KEY"/_/"NA"/_
 #merkle_cert: "KEY"/_/"NA"
 #merkle_log_site_cert: "ndn"/"edu"/"ucla"/#merkle_cert <= #testbed_root_cert
-#merkle_log_operator: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/#merkle_cert <= #merkle_log_site_cert
-#merkle_check: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=check"/_ <= #merkle_log_operator
+#testbed_service_cert: "ndn"/"edu"/"ucla"/"ndnd"/service/#merkle_cert
+    & { service: "merkle" | "repo" } <= #merkle_log_site_cert
+#testbed_service_response: "ndn"/"edu"/"ucla"/"ndnd"/service/operation/_
+    & { service: "merkle", operation: "32=check" | "32=append" }
+    | { service: "repo", operation: "32=cmd" }
+    <= #testbed_service_cert
 #merkle_append_request: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=append"/#user/_ <= #testbed_user_cert
-#merkle_append_response: "ndn"/"edu"/"ucla"/"ndnd"/"merkle"/"32=append"/_ <= #merkle_log_operator
 ```
 
-Both infrastructure certificate classes use `NA`, separating them from generic
-`NDNCERT` user rules. Only the fixed UCLA CA may authorize this service. Append
-requests use a currently valid testbed user credential, independently of the
-workspace certificate signing the retained content.
+The Merkle log and repository share the infrastructure certificate and
+response rules. The `service` component MUST bind the reply to the same
+service's certificate; the rule permits only Merkle `check`/`append` responses
+and repository `cmd` responses. Infrastructure certificates use `NA`, separating
+them from generic `NDNCERT` user rules. Only the fixed UCLA CA may authorize
+these services. Append requests use a currently valid testbed user credential,
+independently of the workspace certificate signing the retained content.
 
 Log responses MUST pass ordinary current-validity checks throughout their
 certificate chain. The log client MUST NOT use historical-expiry fallback to
@@ -342,11 +348,8 @@ Ownly addresses the log by its NDN prefix through the connected router.
 router discovery may select another face. The server accepts at most 100 hashes
 per append; Ownly's 64-hash batches fit that count limit.
 
-Repository replication currently targets `/ndnd/ucla/repo3`. History verification
-MUST remain compatible with this endpoint and its existing command namespaces.
-Migration to the newer repository is a separate change; its routing, command
-names, and common LVS authorization MUST be aligned together. Changing the
-repository alone MUST NOT retarget history-log outbox scopes.
+Repository replication targets `/ndn/edu/ucla/ndnd/repo`. Migration from
+`/ndnd/ucla/repo3` changes repository management and routing as specified below.
 
 Consumers trust the log operator's clock and statements about ingestion time.
 Inclusion proofs do not independently establish wall-clock time or prevent
@@ -354,6 +357,155 @@ operator equivocation. This implementation adds no gossip, consistency audit,
 proof cache, or automatic migration of old outbox scopes. Retention and timely
 submission remain necessary: an unlogged packet cannot gain historical evidence
 retroactively after its authorizing certificate expires.
+
+### 6.1 Repository protocol migration
+
+The new service uses separate routing and management namespaces:
+
+| Purpose | Name |
+| --- | --- |
+| Repository base and forwarding hint | `/ndn/edu/ucla/ndnd/repo` |
+| Management Interest destination | `<repository base>/32=cmd` |
+| Embedded command Data | `<testbed identity>/32=repo/v=…` |
+| Security configuration object prefix | `<testbed identity>/32=repo-security/v=…` |
+| Management response Data | `<repository base>/32=cmd/<parameters-digest>` |
+
+Produced configuration Data appends a terminal segment component to its object
+prefix; the embedded command is an unsegmented Data packet.
+
+The caller identity MUST come from the selected, currently valid NDNCERT
+signer's key name. Command and configuration names MUST use that identity;
+workspace identities and workspace owner labels do not grant testbed management
+authority. The existing key announcement path MUST also announce
+`<testbed identity>/32=repo` and `<testbed identity>/32=repo-security`, since
+the repository uses command/config names as forwarding hints for certificate
+retrieval and the key prefix covers neither name. Only management Interests
+append `32=cmd` to the repository
+base; invitation forwarding hints use the base itself.
+
+The common textual LVS schema MUST replace the obsolete repo3 request rules
+with caller-bound `32=repo` and `32=repo-security` rules. A fixed UCLA repository
+response rule MUST authorize the service's site-issued `NA` certificate through
+the UCLA site certificate and pinned testbed root. The shared service rules in
+§3 MUST preserve the signer binding and permitted operations for each service.
+Request rules MUST bind each supported caller identity length separately;
+combining variable-length identity aliases can lose the caller binding across
+alternatives. `#user1` through `#user6` define each supported user identity
+path once; `#user` aggregates those rules for existing workspace policies.
+The numbered testbed-user certificate aliases and repo requests MUST reuse the
+same numbered user rule, preserving its component bindings. New identity
+lengths MUST extend the aggregate, certificate aliases, and request rules
+together. These schema names do not change NDN identity or certificate names.
+The compiled `schema.tlv` and browser WASM MUST be rebuilt together.
+
+Management commands and responses MUST retain ordinary signature, schema,
+trust-chain, and current certificate validity checks. The authenticated response
+body MUST parse as `RepoCmdRes` with status `200` before reporting a successful
+join. This status acknowledges subscription setup, not archive completion.
+If mandatory security-config publication fails, Ownly MUST abort that join
+attempt rather than request a group with default trust. Existing `SyncJoin`
+fields, anchor collection, snapshot threshold, and asynchronous launch behavior
+remain unchanged. Normal workspace stop MUST NOT unsubscribe the repository;
+the unused legacy leave helper is outside this migration.
+
+### 6.2 Archive continuity
+
+Upgraded clients send management commands only to the new service. Repo3 MUST
+retain its archive for rollback during cutover. Existing archives MUST be
+transferred manually as stored bytes, including inactive groups; client launch
+and history replay are not the archive-transfer mechanism.
+
+Only repo3 is stopped to capture a consistent source store and keychain backup;
+the new repository remains running. The actual running storage paths and Badger
+versions MUST be established before capture. Source export operates on a backup
+copy, not the live source database. The running destination MUST ingest packets
+through its supported protocol; its open Badger directory MUST NOT be edited,
+replaced, or opened by a second database writer. Files from independent Badger
+databases MUST NOT be overlaid.
+
+The deployed protocol has no general database-import command. Embedded
+`BlobFetch.Data` in authenticated SVS publications can store original packet
+wires within a subscribed group. Transfer tooling MUST select safe scopes from
+the source inventory without replacing real workspace registrations or adding
+descendants that interfere with existing certificate and object-prefix lookups.
+This packet transfer is distinct from copying internal repository state.
+
+The source backup retains all stored records. Online transfer MUST preserve
+every original signed Data wire, including all publication and blob segments,
+snapshots, HIDX and discovery metadata, invitations, boot objects, certificates,
+and CertLists. It MUST NOT filter for versioned or segmented names. Existing
+destination packets remain intact; identical duplicates can be skipped, and
+same-name/different-wire conflicts MUST be resolved before submission. Original
+backups and the transfer manifest remain available for recovery. Internal ALO
+and passive state can remain in the source backup; restoring runtime state is
+not part of the migration contract.
+
+All old keychain material MUST be preserved. Public certificate wires are
+imported alongside the new keychain's certificates, including expired
+dependencies needed for historical reading. The new service's current signing
+key, certificate, management schema, and configuration MUST remain intact.
+Any old private keys are retained in a separate private legacy directory rather
+than added to the active service key directory: certificate renewal expects
+exactly one private key for the new service identity. Key material stays on the
+host with appropriate ownership and permissions. Preservation does not grant
+old keys new signing authority or promote every copied certificate as a root.
+
+Stored Data is served unchanged without repeating repository intake validation.
+Consumers still apply the ordinary trust and historical policies. Copying
+expired packets therefore does not require an NDNd expiry-policy change and
+does not create new log evidence. Known names are addressable through the new
+repository's base forwarding hint. Group subscriptions are soft state and are
+rebuilt by the application's normal `SyncJoin` behavior after restart. Migration
+does not inventory or replay the old service's active registrations. Ordinary
+application fetching still needs the corresponding group routes; stored packet
+availability alone does not establish active subscription or discovery state.
+
+Existing packet names, signed wires, invitations, fast-join bundles, encryption
+keys, and IndexedDB records MUST remain unchanged. Repository routing is not
+embedded in those objects. This migration MUST NOT change the Merkle endpoint,
+operator policy, or outbox scope ID, and requires no application dual writes.
+
+Legacy invitation retrieval retains its existing no-hint retry when the new
+repository request returns no Data. That route can reach the owner or repo3's
+boot-group archive. An explicit repo3 attempt SHOULD be added only if that
+existing path cannot preserve archived invitations. Routing retries MUST NOT
+waive subsequent workspace authorization or historical validation.
+
+Repository intake and consumer trust are separate policies. In the pinned NDNd
+source, `ignore_validity: false` selects `ValidateAtSignatureTime` for SVS
+publications, snapshots, and security-config retrieval. It requires each
+expired authorization relation's signed child to carry a signature time within
+the issuer's validity interval. Ownly still requires Merkle ingestion-time
+evidence, or the explicit missing-record fallback in §5.2, when consuming
+retained objects. Signature time MUST NOT replace that consumer evidence.
+
+Pointer-based `BlobFetch` currently uses ordinary `Consume`, omitting the repo's
+expiry callback. Blobs fetched while their authorization chain is valid are
+unaffected. A blob first fetched after that chain expires may not replicate by
+replaying its name alone. The manual store transfer avoids that fetch entirely;
+the migration uses deployed NDNd unchanged. Existing content not yet retained
+by the new store remains dependent on repo3.
+
+Repo3 retirement is a separate operational decision. It requires the new store
+to retain the original boot, invitation, publication, snapshot, metadata, blob,
+and authorization dependency wires needed by existing workspaces. A successful
+join or a routed fetch alone does not establish custody: another repository or
+network cache may supply the Data. No production service restart or retirement
+is part of the client protocol change.
+
+### 6.3 Repository boundaries
+
+Repository management authenticates testbed users; the current server does not
+enforce workspace-owner-only administration. The migration does not introduce
+new workspace privileges. Saved group ALO state survives a repo restart, but
+active subscriptions require another `SyncJoin`; autonomous group restoration
+is outside this change. Cold SVS discovery after all original SyncData signers
+expire remains distinct from consuming retained objects by their known names.
+
+The deployed configuration names the new service and its management schema.
+Before switching clients, the deployed binary, public service certificate chain,
+and compiled management schema MUST agree with this protocol. Deployment
+configuration alone does not establish which certificate signs live responses.
 
 ## 7. Implementation map
 
@@ -369,6 +521,16 @@ retroactively after its authorizing certificate expires.
 | [`boot_sync.go`](../ndn/app/boot_sync.go), [`identity_keys.go`](../ndn/app/identity_keys.go) | Boot authorization capture and persistence of established identity trust. |
 | [`svs-provider.ts`](../src/services/svs-provider.ts), [`bundler.ts`](../src/utils/bundler.ts) | Local Yjs update events, frontend merging, publication calls, and project persistence. |
 | [`yjs_update.go`](../ndn/app/yjs_update.go) | Per-document Yjs merging and encryption within snapshots. |
+
+The repo migration edits [`repo.go`](../ndn/app/repo.go) for management
+names and reply status handling, [`workspace.go`](../ndn/app/workspace.go) for
+the repository base and security-config route, and
+[`schema.trust`](../ndn/app/schema.trust) for common request/response trust.
+[`schema.tlv`](../ndn/app/schema.tlv) and [`main.wasm`](../public/main.wasm) are
+generated outputs. No NDNd change, new runtime file, or persistent application
+format is required for the client protocol migration. Manual store/keychain
+transfer is separate operational work; any temporary
+migration tooling remains outside the committed application runtime.
 
 ## 8. Maintenance and evolution
 
@@ -426,9 +588,9 @@ it is not an outbox limit or permission to discard durable rows.
 `historyLogScopeID` identifies their combined policy for durable work; it is
 neither an NDN name component nor the server's internal log identifier.
 
-An endpoint or signer-policy change MUST update the endpoint, LVS rules, and
-policy ID consistently. A new policy ID isolates old rows; the current startup
-path resumes only the configured policy's scopes. It does not discover or migrate
+An endpoint or signer-policy change for the history log MUST update its endpoint,
+LVS rules, and policy ID consistently. A new policy ID isolates old rows; the
+current startup path resumes only the configured policy's scopes. It does not discover or migrate
 previous scopes. Old work must retain its original endpoint and authorization
 binding; changing an ID MUST NOT silently send it to the new service.
 
