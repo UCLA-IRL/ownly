@@ -107,9 +107,6 @@ importers:
       vue3-toastify:
         specifier: ^0.2.8
         version: 0.2.8(vue@3.5.39(typescript@5.8.3))
-      webworker-typed:
-        specifier: ^1.0.5
-        version: 1.0.5(typescript@5.8.3)
       y-monaco:
         specifier: ^0.1.6
         version: 0.1.6(monaco-editor@0.52.2)(yjs@13.6.26)
@@ -4879,11 +4876,6 @@ packages:
 
   webidl-conversions@4.0.2:
     resolution: {integrity: sha512-YQ+BmxuTgd6UXZW3+ICGfyqRyHXVlD5GtQr5+qjiNW7bF0cqrzX500HVXPBOvgXb5YnzDd+h0zqyv61KUD7+Sg==}
-
-  webworker-typed@1.0.5:
-    resolution: {integrity: sha512-P01lMnShFrKvyO0/dz5yQQgY0SaUOlxHK5C5VnGV7z3TGHbnGN6tmnsregoJaRRIgO1dQeHNmGUO3imtXt4e2g==}
-    peerDependencies:
-      typescript: ^5.2.2
 
   webworkify@1.5.0:
     resolution: {integrity: sha512-AMcUeyXAhbACL8S2hqqdqOLqvJ8ylmIbNwUIqQujRSouf4+eUFaXbG6F1Rbu+srlJMmxQWsiU7mOJi0nMBfM1g==}
@@ -10619,10 +10611,6 @@ snapshots:
   web-worker@1.5.0: {}
 
   webidl-conversions@4.0.2: {}
-
-  webworker-typed@1.0.5(typescript@5.8.3):
-    dependencies:
-      typescript: 5.8.3
 
   webworkify@1.5.0: {}
 

@@ -577,7 +577,7 @@ export class WorkspaceProj {
           const relpath = path.substring(prefix.length);
           const fileHandle = await opfs.getFileHandle(relpath, { create: true, root: folder });
           if (fileHandle) {
-            await opfs.writeContents(fileHandle, basedir + path, content);
+            await opfs.writeContents(fileHandle, content);
 
             const mtime = (await fileHandle.getFile()).lastModified;
             await this.provider.markSynced(uuid, utime, mtime);
@@ -620,7 +620,7 @@ export class WorkspaceProj {
     // Write the file to the filesystem.
     const content = await this.exportFile(path);
     if (content !== null) {
-      await opfs.writeContents(fileHandle, basedir + path, content);
+      await opfs.writeContents(fileHandle, content);
 
       mtime = (await fileHandle.getFile()).lastModified;
       await this.provider.markSynced(meta.uuid, utime, mtime);
