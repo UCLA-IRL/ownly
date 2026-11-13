@@ -13,9 +13,15 @@ export default defineConfig({
   },
   define: defines,
   build: {
+    outDir: 'dist/headless',
     lib: {
       name: 'headless',
-      entry: ['src/node/headless.ts'],
+      entry: {
+        headless: 'src/node/headless.ts',
+        'email-agent': 'src/node/email-agent.ts',
+        'agenda-http': 'src/node/agenda-http.ts',
+      },
+      fileName: (_format, entryName) => `${entryName}.js`,
       formats: ['es'],
     },
     minify: false,
@@ -26,6 +32,9 @@ export default defineConfig({
       },
       external: [
         /node:.*/,
+        'nodemailer',
+        'marked',
+        'sanitize-html',
         'fs',
         'fs/promises',
         'worker_threads',
