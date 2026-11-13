@@ -19,6 +19,7 @@ export default defineConfig({
       entry: {
         headless: 'src/node/headless.ts',
         'email-agent': 'src/node/email-agent.ts',
+        'agenda-http': 'src/node/agenda-http.ts',
       },
       fileName: (_format, entryName) => `${entryName}.js`,
       formats: ['es'],
