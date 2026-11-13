@@ -84,7 +84,7 @@ export async function sendAgenda(markdown: string, config: MailConfig) {
 
 export function renderAgenda(markdown: string): string {
   const content = sanitizeHtml(marked.parse(markdown, { async: false }));
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:Arial,sans-serif;line-height:1.5;max-width:800px;margin:auto;padding:24px"><p>This is a reminder of the upcoming NDN call using Zoom <a href="https://arizona.zoom.us/j/82909523174?pwd=bEc2VXk4M3ZrdC95SGlxUHVzRVFyUT09">https://arizona.zoom.us/j/82909523174?pwd=bEc2VXk4M3ZrdC95SGlxUHVzRVFyUT09</a><br>The current call time is every Friday 09:00-11:00 Pacific Time.</p><hr><main>${content}</main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body><p>This is a reminder of the upcoming NDN call using Zoom <a href="https://arizona.zoom.us/j/82909523174?pwd=bEc2VXk4M3ZrdC95SGlxUHVzRVFyUT09">https://arizona.zoom.us/j/82909523174?pwd=bEc2VXk4M3ZrdC95SGlxUHVzRVFyUT09</a><br>The current call time is every Friday 09:00-11:00 Pacific Time.</p><hr><main>${content}</main></body></html>`;
 }
 
 export function calendarDate(now: Date, timeZone: string): string {

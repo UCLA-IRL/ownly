@@ -17,8 +17,8 @@
     "go:js": "cp $(go env GOROOT)/misc/wasm/wasm_exec.js ./public/wasm_exec.js",
     "mls:wasm": "cd openmls-lite && cargo build --target wasm32-unknown-unknown --release --no-default-features --features wasm && wasm-bindgen --target web --out-dir ../src/wasm --out-name openmls_lite target/wasm32-unknown-unknown/release/openmls_lite.wasm",
     "build:email": "npm run build:headless",
-    "email": "node dist/headless/email-agent.js",
-    "agenda:http": "node dist/headless/agenda-http.js"
+    "email:agenda": "node dist/headless/email-agent.js",
+    "http:agenda": "node dist/headless/agenda-http.js"
   },
   "dependencies": {
     "@bugsnag/browser-performance": "^3.4.1",

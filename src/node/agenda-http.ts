@@ -76,15 +76,9 @@ function page(content: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ownly agenda</title>
-<style>
-body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.6 system-ui, sans-serif; }
-pre { overflow-x: auto; padding: 1rem; background: #f4f4f4; }
-table { border-collapse: collapse; } th, td { border: 1px solid #ccc; padding: .4rem; }
-img { max-width: 100%; } .note { color: #555; }
-</style>
 </head>
 <body>
-<p class="note">This page shows this Ownly participant's available agenda. Updates appear automatically.</p>
+<p>This page shows this Ownly participant's available agenda. Updates appear automatically.</p>
 <main>${content}</main>
 <script>
 const updates = new EventSource('/updates');
@@ -288,8 +282,9 @@ async function main(args: string[]) {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2)).catch(() => {
+const [, entrypoint, ...args] = process.argv;
+if (entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url)) {
+  main(args).catch(() => {
     console.error('Ownly HTTP configuration failed; use --help');
     process.exit(1);
   });

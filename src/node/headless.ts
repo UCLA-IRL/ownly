@@ -350,12 +350,13 @@ async function main(args: string[]) {
   }
 }
 
+const [, entrypoint, ...args] = process.argv;
 if (
-  process.argv[1] &&
-  fs.existsSync(process.argv[1]) &&
-  fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url)
+  entrypoint &&
+  fs.existsSync(entrypoint) &&
+  fs.realpathSync(path.resolve(entrypoint)) === fileURLToPath(import.meta.url)
 ) {
-  main(process.argv.slice(2))
+  main(args)
     .then(() => process.exit(0))
     .catch((error) => {
       console.error('FATAL:', error.message);

@@ -70,7 +70,7 @@ Selection and sending start only after fetching and cleanup succeed.
 
 Use the absolute Node executable path on your host (`/usr/bin/node` was tested).
 The current Go runtime can select its unsupported native network transport when
-launched with bare `node`; this also affects `agenda:http` on such environments.
+launched with bare `node`; this also affects `http:agenda` on such environments.
 The email fetch worker already launches via the absolute `process.execPath`.
 
 Required environment: `OWNLY_WORKSPACE`, `OWNLY_PROJECT`, absolute

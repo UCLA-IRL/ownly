@@ -219,14 +219,15 @@ Peer refresh is best-effort (at most 5000 ms); nonempty available agenda data is
 EMAIL RESULT reports refresh=acknowledged|unacknowledged|not-requested.
 Refresh is not proof of globally latest peer state.`;
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (process.argv.length === 3 && process.argv[2] === FETCH_WORKER && process.send) {
+const [, entrypoint, ...args] = process.argv;
+if (entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url)) {
+  if (args.length === 1 && args.includes(FETCH_WORKER) && process.send) {
     process.once('disconnect', () => process.exit(1));
     process.once('message', (message) => {
       runFetchWorker(message as WorkerRequest).catch(() => process.exit(1));
     });
   } else {
-    runEmailAgent(process.argv.slice(2))
+    runEmailAgent(args)
       .then((result) => {
         if (!result) {
           return;
