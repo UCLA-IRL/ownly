@@ -183,6 +183,34 @@ export class WorkspaceProj {
     return Array.from(this.fileMap.values());
   }
 
+  /** Wait for known file contents, not proof of globally latest peer state. */
+  public async waitForAvailableFiles(timeout: number): Promise<IProjectFile[]> {
+    const ready = (doc: Y.Doc) =>
+      doc.store.clients.size > 0 && !doc.store.pendingStructs && !doc.store.pendingDs;
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (ready(this.root)) {
+        const list = this.getFileList();
+        const files = list.filter((file) => !file.path.endsWith('/'));
+        let available = files.length > 0;
+        for (const file of files) {
+          if (!ready(await this.getFile(file.path))) {
+            available = false;
+            break;
+          }
+        }
+        if (
+          available &&
+          ready(this.root) &&
+          JSON.stringify(list) === JSON.stringify(this.getFileList())
+        )
+          return files;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error('Project file list or contents unavailable or incomplete');
+  }
+
   /** Callback when the list of files changes */
   private onListChange() {
     if (!this.fileMap || this.manager.active?.root.guid !== this.root.guid) return;
@@ -327,6 +355,9 @@ export class WorkspaceProj {
     const doc = new Y.Doc();
     try {
       await this.provider.readInto(doc, meta.uuid);
+      if (doc.store.pendingStructs || doc.store.pendingDs) {
+        throw new Error(`File content incomplete: ${path}`);
+      }
 
       if (meta.is_blob) {
         // Get the latest blob version
@@ -619,12 +650,11 @@ export class WorkspaceProj {
 
     // Write the file to the filesystem.
     const content = await this.exportFile(path);
-    if (content !== null) {
-      await opfs.writeContents(fileHandle, content);
+    if (content === null) throw new Error(`File content unavailable: ${path}`);
+    await opfs.writeContents(fileHandle, content);
 
-      mtime = (await fileHandle.getFile()).lastModified;
-      await this.provider.markSynced(meta.uuid, utime, mtime);
-    }
+    mtime = (await fileHandle.getFile()).lastModified;
+    await this.provider.markSynced(meta.uuid, utime, mtime);
 
     return basedir + path;
   }

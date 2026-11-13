@@ -39,7 +39,7 @@ class Handle {
   }
 
   dismiss() {
-    toast.remove(this.id);
+    if (typeof document !== 'undefined') toast.remove(this.id);
   }
 
   async update(opts: {
@@ -49,6 +49,8 @@ class Handle {
     timeout?: boolean | number;
     closeOnClick?: boolean;
   }) {
+    if (typeof document === 'undefined') return;
+
     // Due to a bug in vue3-toastify, we need to wait
     // for the next tick before updating the toast
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -75,18 +77,22 @@ export class Toast {
   static Handle = new Handle(0);
 
   static success(message: string): Handle {
+    if (typeof document === 'undefined') return Toast.Handle;
     return new Handle(toast.success(message, Toast.opts()));
   }
 
   static error(message: any): Handle {
+    if (typeof document === 'undefined') return Toast.Handle;
     return new Handle(toast.error(String(message), Toast.opts()));
   }
 
   static warning(message: string): Handle {
+    if (typeof document === 'undefined') return Toast.Handle;
     return new Handle(toast.warning(message, Toast.opts()));
   }
 
   static info(message: string): Handle {
+    if (typeof document === 'undefined') return Toast.Handle;
     return new Handle(toast.info(message, Toast.opts()));
   }
 
@@ -106,6 +112,7 @@ export class Toast {
   }
 
   static loading(message: string): Handle {
+    if (typeof document === 'undefined') return Toast.Handle;
     return new Handle(toast.loading(message, Toast.opts()));
   }
 

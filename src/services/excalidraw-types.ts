@@ -1,5 +1,8 @@
 import type * as Y from 'yjs';
-import { hashElementsVersion } from '@excalidraw/excalidraw';
+// Keep Excalidraw 0.18's version hash local: importing the browser editor
+// initializes DOM globals that are unavailable in headless Node.
+const hashElementsVersion = (elements: readonly ExcalidrawElement[]): number =>
+  elements.reduce((hash, element) => (hash * 33 + element.versionNonce) | 0, 5381) >>> 0;
 import type { ExcalidrawElement, Theme } from '@excalidraw/excalidraw/element/types';
 import type { AppState, BinaryFileData, BinaryFiles } from '@excalidraw/excalidraw/types';
 import type { ImportedDataState } from '@excalidraw/excalidraw/data/types';

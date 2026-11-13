@@ -1,0 +1,14 @@
+{
+  "extends": "@tsconfig/node22/tsconfig.json",
+  "include": ["env.d.ts", "src/services.d.ts", "src/node/**/*.ts", "src/types/**/*.d.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node", "golang-wasm-exec"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "DOM.AsyncIterable", "WebWorker"],
+    "paths": { "@/*": ["./src/*"] },
+    "skipLibCheck": true
+  }
+}
