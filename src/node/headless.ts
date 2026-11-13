@@ -43,7 +43,9 @@ export interface HeadlessProject {
 let sessionActive = false;
 
 function validateTimeout(ms: number) {
-  if (!Number.isSafeInteger(ms) || ms < 1 || ms > 2_147_483_647) throw new Error('Invalid timeout');
+  if (!Number.isSafeInteger(ms) || ms < 1 || ms > 2_147_483_647) {
+    throw new Error('Invalid timeout');
+  }
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
@@ -64,7 +66,9 @@ async function bootHeadless(stateDir: string, seedKeychain?: string) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (seedKeychain) {
     for (const entry of fs.readdirSync(seedKeychain, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
+      if (!entry.isFile()) {
+        continue;
+      }
       const destination = path.join(keychain, entry.name);
       fs.copyFileSync(path.join(seedKeychain, entry.name), destination);
       fs.chmodSync(destination, 0o600);
@@ -131,15 +135,24 @@ export async function openHeadlessProject(options: HeadlessOptions): Promise<Hea
   const bundleText = options.fastJoinBundle ?? env.OWNLY_FAST_JOIN_BUNDLE;
   const bundle = bundleText ? parseFastJoinBundle(bundleText) : null;
   const wkspName = options.workspace ?? bundle?.wksp;
-  if (!wkspName || !options.project) throw new Error('Workspace and project are required');
-  if (!options.stateDir) throw new Error('State directory is required');
+  if (!wkspName || !options.project) {
+    throw new Error('Workspace and project are required');
+  }
+  if (!options.stateDir) {
+    throw new Error('State directory is required');
+  }
   const stateDir = path.resolve(options.stateDir);
   const seed = options.seedKeychain && path.resolve(options.seedKeychain);
-  if (seed && !fs.statSync(seed).isDirectory()) throw new Error('Invalid seed keychain directory');
+  if (seed && !fs.statSync(seed).isDirectory()) {
+    throw new Error('Invalid seed keychain directory');
+  }
   const pskText = options.pskHex ?? env.OWNLY_PSK_HEX ?? bundle?.psk;
-  if (pskText !== undefined && !/^[0-9a-fA-F]{64}$/.test(pskText))
+  if (pskText !== undefined && !/^[0-9a-fA-F]{64}$/.test(pskText)) {
     throw new Error('Joining requires a 32-byte PSK (64 hex characters)');
-  if (sessionActive) throw new Error('Only one active headless session per process is supported');
+  }
+  if (sessionActive) {
+    throw new Error('Only one active headless session per process is supported');
+  }
   sessionActive = true;
 
   let wksp: Workspace | undefined;
@@ -160,17 +173,22 @@ export async function openHeadlessProject(options: HeadlessOptions): Promise<Hea
     await ensureTestbedCertificate(ndn.api, env);
     // Upstream ownership checks require a regular identity even with fast join.
     const identities = await ndn.api.list_identity_keys();
-    if (!identities.local.length) await ndn.api.generate_identity_key();
+    if (!identities.local.length) {
+      await ndn.api.generate_identity_key();
+    }
     const existing = await _o.stats.get(wkspName);
-    if (bundle && (!existing || existing.revoked || !existing.dsk))
+    if (bundle && (!existing || existing.revoked || !existing.dsk)) {
       await ndn.api.import_fast_join_identity(
         bundle.ephemeralSecret,
         bundle.ephemeralCert,
         bundle.ownerCert,
       );
+    }
     let finalName = wkspName;
     if (!existing || existing.revoked) {
-      if (!pskText) throw new Error('Joining requires a 32-byte PSK (64 hex characters)');
+      if (!pskText) {
+        throw new Error('Joining requires a 32-byte PSK (64 hex characters)');
+      }
       finalName = await withTimeout(
         Workspace.join(bundle?.label ?? wkspName, wkspName, false, utils.fromHex(pskText), null),
         timeout,
@@ -179,8 +197,9 @@ export async function openHeadlessProject(options: HeadlessOptions): Promise<Hea
     }
     setup = Workspace.setup(utils.escapeUrlName(finalName));
     wksp = await withTimeout(setup, timeout, 'workspace setup');
-    if (options.refresh && !wksp.proj.getProjects().some((proj) => proj.name === options.project))
+    if (options.refresh && !wksp.proj.getProjects().some((proj) => proj.name === options.project)) {
       await refreshWorkspace(wksp, timeout);
+    }
     const project = await waitForProject(wksp, options.project, timeout);
     // Subscribe to the project before asking peers to republish its documents.
     const refresh = options.refresh ? await refreshWorkspace(wksp, timeout) : 'not-requested';
@@ -193,9 +212,13 @@ export async function openHeadlessProject(options: HeadlessOptions): Promise<Hea
         validateTimeout(timeoutMs);
         const deadline = Date.now() + timeoutMs;
         const remaining = () => {
-          if (closing) throw new Error('Headless session is closed');
+          if (closing) {
+            throw new Error('Headless session is closed');
+          }
           const ms = deadline - Date.now();
-          if (ms <= 0) throw new Error('File read timed out');
+          if (ms <= 0) {
+            throw new Error('File read timed out');
+          }
           return ms;
         };
         while (true) {
@@ -212,7 +235,9 @@ export async function openHeadlessProject(options: HeadlessOptions): Promise<Hea
                   'file read',
                 );
                 remaining();
-                if (content !== null) return content;
+                if (content !== null) {
+                  return content;
+                }
               }
             }
           }
@@ -276,7 +301,9 @@ async function main(args: string[]) {
     console.log(HELP);
     return;
   }
-  if (positionals.length > 2) throw new Error('Expected at most workspace and project positionals');
+  if (positionals.length > 2) {
+    throw new Error('Expected at most workspace and project positionals');
+  }
   const timeout = Number(values.timeout);
   const session = await openHeadlessProject({
     workspace: values.wksp ?? positionals[0],
@@ -292,7 +319,9 @@ async function main(args: string[]) {
     const deadline = Date.now() + timeout;
     const remaining = () => {
       const ms = deadline - Date.now();
-      if (ms <= 0) throw new Error('Project export timed out');
+      if (ms <= 0) {
+        throw new Error('Project export timed out');
+      }
       return ms;
     };
     const files = await withTimeout(

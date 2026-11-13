@@ -23,7 +23,9 @@ type FetchConfig = {
 
 const required = (env: Env, key: string) => {
   const value = env[key];
-  if (!value?.trim()) throw new Error(`Missing ${key}`);
+  if (!value?.trim()) {
+    throw new Error(`Missing ${key}`);
+  }
   return value;
 };
 
@@ -34,7 +36,9 @@ type WorkerRequest = Omit<FetchConfig, 'env'> & { deadline: number };
 async function runFetchWorker(config: WorkerRequest) {
   const remaining = () => {
     const ms = config.deadline - Date.now();
-    if (ms < 1) throw new Error('Ownly fetch timed out');
+    if (ms < 1) {
+      throw new Error('Ownly fetch timed out');
+    }
     return ms;
   };
   const { openHeadlessProject } = await import('./headless');
@@ -50,12 +54,16 @@ async function runFetchWorker(config: WorkerRequest) {
   let markdown: string;
   try {
     markdown = new TextDecoder().decode(await session.readFile(config.agenda, remaining()));
-    if (!markdown.trim()) throw new Error('Ownly agenda empty');
+    if (!markdown.trim()) {
+      throw new Error('Ownly agenda empty');
+    }
   } finally {
     await session.close();
   }
   remaining();
-  if (!process.send) throw new Error('Ownly fetch IPC unavailable');
+  if (!process.send) {
+    throw new Error('Ownly fetch IPC unavailable');
+  }
   process.send({ markdown, refresh: session.refresh }, (error: Error | null) =>
     process.exit(error ? 1 : 0),
   );
@@ -66,7 +74,9 @@ export async function fetchOwnly(config: FetchConfig): Promise<unknown> {
   const deadline = Date.now() + config.timeout;
   const env = { ...config.env };
   for (const key of Object.keys(env))
-    if (key.startsWith('SMTP_') || key.startsWith('EMAIL_')) delete env[key];
+    if (key.startsWith('SMTP_') || key.startsWith('EMAIL_')) {
+      delete env[key];
+    }
   return new Promise<unknown>((resolve, reject) => {
     let result: unknown;
     let timedOut = false;
@@ -92,8 +102,11 @@ export async function fetchOwnly(config: FetchConfig): Promise<unknown> {
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      if (!timedOut && Date.now() < deadline && code === 0 && !signal && result) resolve(result);
-      else reject(new Error('Ownly fetch failed or timed out; no email sent'));
+      if (!timedOut && Date.now() < deadline && code === 0 && !signal && result) {
+        resolve(result);
+      } else {
+        reject(new Error('Ownly fetch failed or timed out; no email sent'));
+      }
     });
     child.send(
       {
@@ -105,7 +118,9 @@ export async function fetchOwnly(config: FetchConfig): Promise<unknown> {
         deadline,
       } satisfies WorkerRequest,
       (error) => {
-        if (error) child.kill('SIGKILL');
+        if (error) {
+          child.kill('SIGKILL');
+        }
       },
     );
   });
@@ -132,11 +147,16 @@ export async function runEmailAgent(args: string[], env: Env = process.env) {
     agenda: required(env, 'AGENDA_PATH'),
     env,
   };
-  if (!Number.isSafeInteger(config.timeout) || config.timeout < 1 || config.timeout > 2_147_483_647)
+  if (
+    !Number.isSafeInteger(config.timeout) ||
+    config.timeout < 1 ||
+    config.timeout > 2_147_483_647
+  ) {
     throw new Error('Invalid OWNLY_TIMEOUT_MS');
+  }
   const today = calendarDate(new Date(), env.AGENDA_TIMEZONE ?? 'UTC');
   let mail: MailConfig | undefined;
-  if (!dryRun)
+  if (!dryRun) {
     mail = {
       from: required(env, 'EMAIL_FROM'),
       to: required(env, 'EMAIL_TO')
@@ -151,16 +171,22 @@ export async function runEmailAgent(args: string[], env: Env = process.env) {
         pass: env.SMTP_PASS,
       },
     };
-  if (mail) validateMail(mail);
+  }
+  if (mail) {
+    validateMail(mail);
+  }
   const raw = await fetchOwnly(config);
-  if (!raw || typeof raw !== 'object') throw new Error('Invalid Ownly agenda result');
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Invalid Ownly agenda result');
+  }
   const result = raw as { markdown?: string; refresh?: string };
   if (
     !['acknowledged', 'unacknowledged', 'not-requested'].includes(result.refresh ?? '') ||
     typeof result.markdown !== 'string' ||
     !result.markdown.trim()
-  )
+  ) {
     throw new Error('Ownly agenda empty or invalid refresh status; no email sent');
+  }
   const selection = selectAgenda(result.markdown, today);
   if (dryRun) {
     return {
@@ -202,8 +228,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   } else {
     runEmailAgent(process.argv.slice(2))
       .then((result) => {
-        if (!result) return;
-        if (result.status === 'dry-run') console.log(result.markdown);
+        if (!result) {
+          return;
+        }
+        if (result.status === 'dry-run') {
+          console.log(result.markdown);
+        }
         // Print no raw child logs, transport response or credentials.
         console.log(
           'EMAIL RESULT: ' +

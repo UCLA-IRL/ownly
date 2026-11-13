@@ -22,14 +22,17 @@ Use one process per state directory. Relative workspace attachments are not host
 
 function required(key: string): string {
   const value = process.env[key];
-  if (!value?.trim()) throw new Error('Invalid configuration');
+  if (!value?.trim()) {
+    throw new Error('Invalid configuration');
+  }
   return value;
 }
 
 function integer(value: string, max: number): number {
   const number = Number(value);
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(number) || number < 1 || number > max)
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(number) || number < 1 || number > max) {
     throw new Error('Invalid configuration');
+  }
   return number;
 }
 
@@ -51,13 +54,18 @@ function respond(
 
 async function renderAgenda(session: HeadlessProject, agenda: string): Promise<string> {
   const before = session.project.getFileMeta(agenda);
-  if (before?.is_blob) throw new Error('Agenda unavailable');
+  if (before?.is_blob) {
+    throw new Error('Agenda unavailable');
+  }
   const bytes = await session.readFile(agenda, 5000);
   const after = session.project.getFileMeta(agenda);
-  if (!after || after.is_blob || (before && before.uuid !== after.uuid))
+  if (!after || after.is_blob || (before && before.uuid !== after.uuid)) {
     throw new Error('Agenda unavailable');
+  }
   const markdown = new TextDecoder().decode(bytes);
-  if (!markdown.trim()) throw new Error('Agenda unavailable');
+  if (!markdown.trim()) {
+    throw new Error('Agenda unavailable');
+  }
   return sanitizeHtml(marked.parse(markdown, { async: false }));
 }
 
@@ -127,8 +135,9 @@ async function main(args: string[]) {
   const timeoutMs = integer(process.env.OWNLY_TIMEOUT_MS ?? '180000', 2_147_483_647);
   const port = integer(values.port, 65535);
   const host = values.host;
-  if (!host.trim() || !path.isAbsolute(stateDir) || !agenda.endsWith('.md'))
+  if (!host.trim() || !path.isAbsolute(stateDir) || !agenda.endsWith('.md')) {
     throw new Error('Invalid configuration');
+  }
   const seedKeychain = process.env.OWNLY_SEED_KEYCHAIN;
   const seed = seedKeychain ? path.resolve(seedKeychain) : undefined;
   silenceBackendOutput();
@@ -142,16 +151,22 @@ async function main(args: string[]) {
   const clients = new Set<ServerResponse>();
   const snapshot = () => {
     reading ??= (async () => {
-      if (stopping || !session) throw new Error('Agenda unavailable');
+      if (stopping || !session) {
+        throw new Error('Agenda unavailable');
+      }
       const doc = await session.project.getFile(agenda);
-      if (stopping) throw new Error('Agenda unavailable');
+      if (stopping) {
+        throw new Error('Agenda unavailable');
+      }
       if (doc !== agendaDoc) {
         agendaDoc?.off('updateV2', onUpdate);
         agendaDoc = doc;
         agendaDoc.on('updateV2', onUpdate);
       }
       const html = await renderAgenda(session, agenda);
-      if (stopping) throw new Error('Agenda unavailable');
+      if (stopping) {
+        throw new Error('Agenda unavailable');
+      }
       if (html !== latest) {
         latest = html;
         for (const response of clients) response.write(`data: ${JSON.stringify(html)}\n\n`);
@@ -208,7 +223,9 @@ async function main(args: string[]) {
   });
 
   const shutdown = async (code: number) => {
-    if (stopping) return;
+    if (stopping) {
+      return;
+    }
     stopping = true;
     clearTimeout(startupTimer);
     agendaDoc?.off('updateV2', onUpdate);
@@ -218,8 +235,11 @@ async function main(args: string[]) {
     try {
       await Promise.all([
         new Promise<void>((resolve) => {
-          if (server.listening) server.close(() => resolve());
-          else resolve();
+          if (server.listening) {
+            server.close(() => resolve());
+          } else {
+            resolve();
+          }
         }),
         (async () => {
           const opened = session ?? (await opening);
@@ -245,7 +265,9 @@ async function main(args: string[]) {
 
   try {
     const { openHeadlessProject } = await import('./headless');
-    if (stopping) return;
+    if (stopping) {
+      return;
+    }
     opening = openHeadlessProject({
       workspace,
       project,
@@ -256,7 +278,9 @@ async function main(args: string[]) {
       env: process.env,
     });
     session = await opening;
-    if (stopping) return;
+    if (stopping) {
+      return;
+    }
     server.listen(port, host, () => clearTimeout(startupTimer));
   } catch {
     console.error('Ownly HTTP startup failed');

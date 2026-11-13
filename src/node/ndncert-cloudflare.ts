@@ -13,8 +13,9 @@ type EnrollmentApi = {
 
 // SDK errors include response bodies; report status without leaking credentials.
 function safeError(error: unknown): Error {
-  if (error instanceof Cloudflare.APIError)
+  if (error instanceof Cloudflare.APIError) {
     return new Error(`Cloudflare request failed${error.status ? ` (HTTP ${error.status})` : ''}`);
+  }
   return error instanceof Error ? error : new Error('DNS enrollment failed');
 }
 
@@ -22,11 +23,16 @@ export async function ensureTestbedCertificate(
   api: EnrollmentApi,
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  if (await api.has_testbed_key()) return;
+  if (await api.has_testbed_key()) {
+    return;
+  }
   const domain = env.OWNLY_NDNCERT_DOMAIN;
-  if (!domain) return;
-  if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ZONE_ID)
+  if (!domain) {
+    return;
+  }
+  if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ZONE_ID) {
     throw new Error('DNS enrollment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID');
+  }
   const client = new Cloudflare({ apiToken: env.CLOUDFLARE_API_TOKEN });
   const zone = { zone_id: env.CLOUDFLARE_ZONE_ID };
   const resolver = new Resolver({ timeout: 2_000, tries: 1 });
@@ -38,8 +44,9 @@ export async function ensureTestbedCertificate(
     await api.ndncert_dns(domain, async (recordName, content, status) => {
       try {
         const name = recordName.replace(/\.$/, '');
-        if (name.toLowerCase() !== `_ndncert-challenge.${domain}`.toLowerCase())
+        if (name.toLowerCase() !== `_ndncert-challenge.${domain}`.toLowerCase()) {
           throw new Error('Unexpected DNS challenge record');
+        }
         if (!recordId) {
           const record = await client.dns.records.create({
             ...zone,
@@ -52,10 +59,14 @@ export async function ensureTestbedCertificate(
           // Fail normally while there is still time to delete the challenge record.
           deadline = Date.now() + 30_000;
         }
-        if (status === 'wrong-record') await delay(2_000);
+        if (status === 'wrong-record') {
+          await delay(2_000);
+        }
         while (Date.now() < deadline) {
           const answers = await resolver.resolveTxt(name).catch(() => []);
-          if (answers.some((chunks) => chunks.join('') === content)) return 'ready';
+          if (answers.some((chunks) => chunks.join('') === content)) {
+            return 'ready';
+          }
           await delay(2_000);
         }
         throw new Error('DNS challenge propagation timed out');

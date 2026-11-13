@@ -24,21 +24,28 @@ export function validateMail(config: MailConfig): void {
   ) {
     throw new Error('Invalid EMAIL_FROM or EMAIL_TO; use bare email addresses');
   }
-  if (new Set(config.to.map((to) => to.toLowerCase())).size !== config.to.length)
+  if (new Set(config.to.map((to) => to.toLowerCase())).size !== config.to.length) {
     throw new Error('Invalid EMAIL_TO: duplicate recipients');
-  if (!config.subject.trim() || /[\r\n]/.test(config.subject))
+  }
+  if (!config.subject.trim() || /[\r\n]/.test(config.subject)) {
     throw new Error('Invalid EMAIL_SUBJECT');
+  }
   const smtp = config.smtp;
-  if (!smtp.host.trim() || /\s/.test(smtp.host)) throw new Error('Invalid SMTP_HOST');
-  if (!Number.isInteger(smtp.port) || smtp.port < 1 || smtp.port > 65535)
+  if (!smtp.host.trim() || /\s/.test(smtp.host)) {
+    throw new Error('Invalid SMTP_HOST');
+  }
+  if (!Number.isInteger(smtp.port) || smtp.port < 1 || smtp.port > 65535) {
     throw new Error('Invalid SMTP_PORT');
-  if (!['tls', 'starttls', 'plain'].includes(smtp.security))
+  }
+  if (!['tls', 'starttls', 'plain'].includes(smtp.security)) {
     throw new Error('Invalid SMTP_SECURITY');
+  }
   if (smtp.security === 'plain' && !['localhost', '127.0.0.1', '::1'].includes(smtp.host)) {
     throw new Error('SMTP plaintext is restricted to loopback testing');
   }
-  if (Boolean(smtp.user) !== Boolean(smtp.pass))
+  if (Boolean(smtp.user) !== Boolean(smtp.pass)) {
     throw new Error('SMTP_USER and SMTP_PASS are both required for authentication');
+  }
 }
 
 /** No retry: a lost SMTP acknowledgement can mean delivery already happened. */
@@ -63,8 +70,9 @@ export async function sendAgenda(markdown: string, config: MailConfig) {
       disableFileAccess: true,
       disableUrlAccess: true,
     });
-    if (info.rejected.length || info.accepted.length !== config.to.length)
+    if (info.rejected.length || info.accepted.length !== config.to.length) {
       throw new Error('not all recipients accepted');
+    }
     return { status: 'sent' as const, messageId: info.messageId };
   } catch {
     // SMTP responses can contain private addresses/authentication diagnostics.

@@ -66,8 +66,12 @@ export class WorkspaceProjManager {
 
   /** Create a new project */
   public async newProject(name: string) {
-    if (!name) throw new Error('Project name is required');
-    if (this.list.has(name)) throw new Error('Project already exists');
+    if (!name) {
+      throw new Error('Project name is required');
+    }
+    if (this.list.has(name)) {
+      throw new Error('Project already exists');
+    }
     const uuid = nanoid();
     this.list.set(uuid, { uuid, name });
   }
@@ -76,10 +80,14 @@ export class WorkspaceProjManager {
   public async get(name: string): Promise<WorkspaceProj> {
     const pmeta = this.getProjects().find((p) => p.name === name);
     const puuid = pmeta?.uuid;
-    if (!puuid) throw new Error('Project not found');
+    if (!puuid) {
+      throw new Error('Project not found');
+    }
 
     let proj = this.instances.get(puuid);
-    if (proj) return proj;
+    if (proj) {
+      return proj;
+    }
 
     // Create project instance
     proj = await WorkspaceProj.create(puuid, pmeta.name, this.wksp, this);
@@ -203,8 +211,9 @@ export class WorkspaceProj {
           available &&
           ready(this.root) &&
           JSON.stringify(list) === JSON.stringify(this.getFileList())
-        )
+        ) {
           return files;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -213,7 +222,9 @@ export class WorkspaceProj {
 
   /** Callback when the list of files changes */
   private onListChange() {
-    if (!this.fileMap || this.manager.active?.root.guid !== this.root.guid) return;
+    if (!this.fileMap || this.manager.active?.root.guid !== this.root.guid) {
+      return;
+    }
     GlobalBus.emit('project-files', this.uuid, this.getFileList());
   }
 
@@ -225,9 +236,12 @@ export class WorkspaceProj {
 
   /** Create a new file or folder in the project */
   public async newFile(path: string, is_blob?: boolean) {
-    if (!path) throw new Error('File path is required');
-    if (this.getFileMeta(path) || this.getFileMeta(path + '/'))
+    if (!path) {
+      throw new Error('File path is required');
+    }
+    if (this.getFileMeta(path) || this.getFileMeta(path + '/')) {
       throw new Error('File or folder already exists');
+    }
 
     // Check for invalid characters
     if (!utils.isPathValid(path)) {
@@ -273,7 +287,9 @@ export class WorkspaceProj {
    */
   public async getFile(path: string): Promise<Y.Doc> {
     const meta = this.getFileMeta(path);
-    if (!meta?.uuid) throw new Error(`File not found: ${path}`);
+    if (!meta?.uuid) {
+      throw new Error(`File not found: ${path}`);
+    }
     return await this.provider.getDoc(meta.uuid);
   }
 
@@ -305,8 +321,12 @@ export class WorkspaceProj {
     // Get all matching files
     const oldIsFolder = oldPath.endsWith('/');
     const oldMetas: IProjectFile[] = this.getFileList().filter((f) => {
-      if (f.path === oldPath) return true;
-      if (oldIsFolder && f.path.startsWith(oldPath)) return true;
+      if (f.path === oldPath) {
+        return true;
+      }
+      if (oldIsFolder && f.path.startsWith(oldPath)) {
+        return true;
+      }
       return false;
     });
     if (!oldMetas.length) {
@@ -346,7 +366,9 @@ export class WorkspaceProj {
 
     // Get the file metadata
     const meta = this.fileMap.get(path);
-    if (!meta?.uuid) throw new Error(`File not found: ${path}`);
+    if (!meta?.uuid) {
+      throw new Error(`File not found: ${path}`);
+    }
 
     // Always return a Uint8Array
     const toUtf8 = (str: string) => new TextEncoder().encode(str);
@@ -363,7 +385,9 @@ export class WorkspaceProj {
         // Get the latest blob version
         const history = doc.getArray<IBlobVersion>('blobs');
         const latest = history.get(0);
-        if (!latest) return null;
+        if (!latest) {
+          return null;
+        }
 
         // Get the blob content from local or network
         // TODO: this makes it very important to show progress
@@ -532,7 +556,9 @@ export class WorkspaceProj {
    */
   public async getAwareness(path: string): Promise<awareProto.Awareness> {
     const uuid = this.fileMap.get(path)?.uuid;
-    if (!uuid) throw new Error(`File not found: ${path}`);
+    if (!uuid) {
+      throw new Error(`File not found: ${path}`);
+    }
 
     return await this.provider.getAwareness(uuid);
   }
@@ -561,7 +587,9 @@ export class WorkspaceProj {
     // Map path => [uuid, utime]
     const updateList = new Map<string, [string, number]>();
     for (const entry of this.fileMap.values()) {
-      if (!entry.path.startsWith(prefix)) continue;
+      if (!entry.path.startsWith(prefix)) {
+        continue;
+      }
       updateList.set(entry.path, [entry.uuid, -2]);
     }
 
@@ -591,12 +619,16 @@ export class WorkspaceProj {
       const uuid = meta[0];
 
       // Folders are automatically created, don't bother writing them
-      if (path.endsWith('/')) continue;
+      if (path.endsWith('/')) {
+        continue;
+      }
 
       try {
         // Get the update time for the file
         let utime = meta[1];
-        if (utime < 0) utime = (await this.provider.needsSync(uuid, -1)) ?? -1;
+        if (utime < 0) {
+          utime = (await this.provider.needsSync(uuid, -1)) ?? -1;
+        }
 
         // Write the file to the OPFS filesystem.
         //
@@ -630,27 +662,37 @@ export class WorkspaceProj {
     let path = opts?.path ?? '/';
 
     // Check if this is a folder
-    if (path.endsWith('/')) throw new Error('Cannot sync folder as file');
+    if (path.endsWith('/')) {
+      throw new Error('Cannot sync folder as file');
+    }
 
     // Get metadata for the file
     path = utils.normalizePath(path);
     const meta = this.fileMap.get(path);
-    if (!meta) throw new Error(`File not found: ${path}`);
+    if (!meta) {
+      throw new Error(`File not found: ${path}`);
+    }
 
     // Get the file in the FS
     const basedir = this.getFsBasePath(opts);
     const folder = await opfs.getDirectoryHandle(basedir, { create: true });
     const fileHandle = await opfs.getFileHandle(path, { create: true, root: folder });
-    if (!fileHandle) throw new Error(`File could not be created: ${path}`);
+    if (!fileHandle) {
+      throw new Error(`File could not be created: ${path}`);
+    }
 
     // Check if the file is up to date
     let mtime = (await fileHandle.getFile()).lastModified;
     const utime = await this.provider.needsSync(meta.uuid, mtime);
-    if (utime === null) return basedir + path;
+    if (utime === null) {
+      return basedir + path;
+    }
 
     // Write the file to the filesystem.
     const content = await this.exportFile(path);
-    if (content === null) throw new Error(`File content unavailable: ${path}`);
+    if (content === null) {
+      throw new Error(`File content unavailable: ${path}`);
+    }
     await opfs.writeContents(fileHandle, content);
 
     mtime = (await fileHandle.getFile()).lastModified;
