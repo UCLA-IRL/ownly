@@ -604,8 +604,7 @@ async function proceedToIdentitySetup() {
           `Your current identity "${overview.identity}" does not match ` +
           `the identity designated by the fast-join link ` +
           `("${fastJoinBundle.value.inviteeIdentity}"). ` +
-          `Sign out and re-authenticate with the correct email or domain, ` +
-          `or contact the inviter.`;
+          `Ask the inviter to send you a fast-join link for "${overview.identity}".`;
         return;
       }
       finishLogin();
