@@ -240,6 +240,14 @@ func (a *App) onAccessRequest(args ndn.InterestHandlerArgs) {
 
 }
 
+func (a *App) resetWorkspaceKeys() {
+	a.psk = nil
+	a.dsk = nil
+	a.aes = nil
+	a.sessionId = ""
+	a.keyRing = nil
+}
+
 // GetWorkspace returns a JS object representing the workspace with the given name.
 func (a *App) GetWorkspace(groupStr string, allowMissingHistory bool) (api js.Value, err error) {
 	if err = a.promoteIdentityAnchors(); err != nil {
@@ -376,10 +384,7 @@ func (a *App) GetWorkspace(groupStr string, allowMissingHistory bool) (api js.Va
 		return
 	}
 
-	// Reset encryption keys
-	a.psk = nil
-	a.dsk = nil
-	a.aes = nil
+	a.resetWorkspaceKeys()
 
 	// After bootstrapping
 	// Watch for directed request interests used by SOS and MLS reset.
