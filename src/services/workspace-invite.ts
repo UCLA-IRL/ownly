@@ -518,12 +518,11 @@ export class WorkspaceInviteManager {
 
     const hex = utils.toHex(key);
 
-    const recent = [
+    this.wsmeta.mlsKeys = [
       { sessionId, mlsKey: hex },
       ...(this.wsmeta.mlsKeys ?? []).filter((x) => x.sessionId !== sessionId),
-    ].slice(0, 5);
+    ];
 
-    this.wsmeta.mlsKeys = recent;
     this.wsmeta.mlsJoinRequested = false;
     await _o.stats.put(this.wsmeta.name, this.wsmeta);
     await this.persistMlsState();

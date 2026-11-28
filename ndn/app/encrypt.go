@@ -20,10 +20,7 @@ import (
 	"github.com/named-data/ndnd/std/types/optional"
 )
 
-const (
-	maxSessionKeys  = 5
-	LegacySessionID = "legacy"
-)
+const LegacySessionID = "legacy"
 
 func (a *App) installEncryptKey(sessionID string, key []byte) error {
 	block, err := aes.NewCipher(key)
@@ -40,9 +37,6 @@ func (a *App) installEncryptKey(sessionID string, key []byte) error {
 			continue
 		}
 		ring = append(ring, e)
-		if len(ring) == maxSessionKeys {
-			break
-		}
 	}
 	a.keyRing = ring
 	return nil

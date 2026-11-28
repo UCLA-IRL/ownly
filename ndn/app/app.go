@@ -55,7 +55,7 @@ type App struct {
 
 	// Session ID
 	sessionId string
-	// 5 session ciphers for decryption
+	// Session ciphers for decryption
 	keyRing []SessionCipher
 
 	// Tracks boot sync groups we have already joined to avoid duplicates
